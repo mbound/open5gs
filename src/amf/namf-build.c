@@ -613,6 +613,33 @@ cleanup:
     return request;
 }
 
+ogs_sbi_request_t *amf_namf_callback_build_n2_info_notify(
+        amf_ue_t *amf_ue, void *data)
+{
+    ogs_sbi_message_t message;
+    ogs_sbi_request_t *request = NULL;
+    OpenAPI_n2_information_notification_t notification;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->supi);
+    ogs_assert(amf_ue->handover.n2_notify_uri);
+
+    memset(&message, 0, sizeof(message));
+    memset(&notification, 0, sizeof(notification));
+
+    message.h.method = (char *)OGS_SBI_HTTP_METHOD_POST;
+    message.h.uri = amf_ue->handover.n2_notify_uri;
+
+    notification.n2_notify_subscription_id = amf_ue->supi;
+    notification.notify_reason =
+        OpenAPI_n2_info_notify_reason_HANDOVER_COMPLETED;
+    message.N2InformationNotification = &notification;
+
+    request = ogs_sbi_build_request(&message);
+    ogs_expect(request);
+    return request;
+}
+
 ogs_sbi_request_t *amf_namf_comm_build_ue_context_transfer(
         amf_ue_t *amf_ue, void *data)
 {
