@@ -723,6 +723,16 @@ struct amf_ue_s {
         OCTET_STRING_t container;
         NGAP_Cause_PR group;
         long cause;
+
+        /*
+         * N2 handover with AMF relocation (TS 23.502 4.9.1.3.2).
+         * On the target AMF there is intentionally no local source ran_ue;
+         * retain the inbound CreateUEContext stream until target-RAN and
+         * SMF handover preparation have completed asynchronously.
+         */
+        bool inter_amf_target;
+        ogs_pool_id_t create_ue_context_stream_id;
+        char *n2_notify_uri;
     } handover;
 
     /* SubscriptionId of Subscription to Data Change Notification to UDM */
