@@ -72,6 +72,7 @@ int ngap_send_path_switch_failure(
         NGAP_Cause_PR group, long cause);
 
 int ngap_send_handover_request(amf_ue_t *amf_ue);
+int ngap_send_handover_request_to_target(amf_ue_t *amf_ue);
 int ngap_send_handover_preparation_failure(
         ran_ue_t *source_ue, NGAP_Cause_t *cause);
 int ngap_send_handover_command(amf_ue_t *amf_ue);
