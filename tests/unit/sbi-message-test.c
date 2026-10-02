@@ -1349,6 +1349,74 @@ static void sbi_message_test14(abts_case *tc, void *data)
     ogs_log_set_domain_level(id, level);
 }
 
+static void sbi_message_test15(abts_case *tc, void *data)
+{
+    const char *body =
+        "{"
+        "\"ueContext\":{\"supi\":\"imsi-001010123456789\"},"
+        "\"targetId\":{"
+            "\"ranNodeId\":{"
+                "\"plmnId\":{\"mcc\":\"001\",\"mnc\":\"01\"},"
+                "\"gNbId\":{\"bitLength\":32,\"gNBValue\":\"00000001\"}"
+            "},"
+            "\"tai\":{"
+                "\"plmnId\":{\"mcc\":\"001\",\"mnc\":\"01\"},"
+                "\"tac\":\"000001\""
+            "}"
+        "},"
+        "\"sourceToTargetData\":{"
+            "\"ngapIeType\":\"HANDOVER_REQUIRED\","
+            "\"ngapData\":{\"contentId\":\"n2Info\"}"
+        "},"
+        "\"pduSessionList\":[{\"pduSessionId\":1}]"
+        "}";
+    ogs_sbi_request_t *request = NULL;
+    ogs_sbi_message_t message;
+    int rv;
+
+    request = ogs_sbi_request_new();
+    ABTS_PTR_NOTNULL(tc, request);
+    if (!request) return;
+
+    request->h.method = ogs_strdup(OGS_SBI_HTTP_METHOD_PUT);
+    request->h.uri = ogs_strdup(
+            "/namf-comm/v1/ue-contexts/imsi-001010123456789");
+    request->http.content = ogs_strdup(body);
+    request->http.content_length = strlen(body);
+    ogs_sbi_header_set(request->http.headers,
+            OGS_SBI_CONTENT_TYPE, OGS_SBI_CONTENT_JSON_TYPE);
+
+    memset(&message, 0, sizeof(message));
+    rv = ogs_sbi_parse_request(&message, request);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    if (rv == OGS_OK) {
+        ABTS_STR_EQUAL(tc, OGS_SBI_HTTP_METHOD_PUT, message.h.method);
+        ABTS_STR_EQUAL(tc, "namf-comm", message.h.service.name);
+        ABTS_STR_EQUAL(tc, OGS_SBI_API_V1, message.h.api.version);
+        ABTS_STR_EQUAL(tc, OGS_SBI_RESOURCE_NAME_UE_CONTEXTS,
+                message.h.resource.component[0]);
+        ABTS_STR_EQUAL(tc, "imsi-001010123456789",
+                message.h.resource.component[1]);
+        ABTS_PTR_EQUAL(tc, NULL, message.h.resource.component[2]);
+
+        ABTS_PTR_NOTNULL(tc, message.UeContextCreateData);
+        if (message.UeContextCreateData) {
+            ABTS_PTR_NOTNULL(tc, message.UeContextCreateData->ue_context);
+            ABTS_PTR_NOTNULL(tc, message.UeContextCreateData->target_id);
+            ABTS_PTR_NOTNULL(tc,
+                    message.UeContextCreateData->source_to_target_data);
+            ABTS_PTR_NOTNULL(tc,
+                    message.UeContextCreateData->pdu_session_list);
+            if (message.UeContextCreateData->pdu_session_list)
+                ABTS_INT_EQUAL(tc, 1,
+                        message.UeContextCreateData->pdu_session_list->count);
+        }
+
+        ogs_sbi_message_free(&message);
+    }
+    ogs_sbi_request_free(request);
+}
+
 abts_suite *test_sbi_message(abts_suite *suite)
 {
     size_t i;
@@ -1379,6 +1447,7 @@ abts_suite *test_sbi_message(abts_suite *suite)
     abts_run_test(suite, sbi_message_test12, NULL);
     abts_run_test(suite, sbi_message_test13, NULL);
     abts_run_test(suite, sbi_message_test14, NULL);
+    abts_run_test(suite, sbi_message_test15, NULL);
 
     return suite;
 }
