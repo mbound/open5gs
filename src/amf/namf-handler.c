@@ -1628,9 +1628,6 @@ static int amf_namf_comm_decode_ue_context(
             amf_ue_save_to_release_session_list(amf_ue);
     }
 
-    if (UeContext->seaf_data)
-        amf_ue->security_context_available = 1;
-
     /* TODO ueRadioCapability */
 
     return OGS_OK;
@@ -1747,6 +1744,21 @@ static void amf_namf_comm_decode_ue_mm_context_list(
             ogs_error("No MmContext");
             continue;
         }
+
+        if (MmContext->access_type != OpenAPI_access_type_NULL)
+            amf_ue->nas.access_type = (int)MmContext->access_type;
+
+        if (MmContext->nas_security_mode) {
+            amf_ue->selected_enc_algorithm =
+                (uint8_t)MmContext->nas_security_mode->ciphering_algorithm;
+            amf_ue->selected_int_algorithm =
+                (uint8_t)MmContext->nas_security_mode->integrity_algorithm;
+        }
+
+        if (MmContext->is_nas_downlink_count)
+            amf_ue->dl_count = (uint32_t)MmContext->nas_downlink_count;
+        if (MmContext->is_nas_uplink_count)
+            amf_ue->ul_count.i32 = (uint32_t)MmContext->nas_uplink_count;
 
         AllowedNssaiList = MmContext->allowed_nssai;
         NssaiMappingList = MmContext->nssai_mapping_list;
