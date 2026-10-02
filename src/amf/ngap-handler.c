@@ -4881,18 +4881,6 @@ void ngap_handle_handover_notification(
         return;
     }
 
-    source_ue = ran_ue_find_by_id(target_ue->source_ue_id);
-    if (!source_ue) {
-        ogs_error("Cannot find Source-UE Context [%lld]",
-                (long long)amf_ue_ngap_id);
-        r = ngap_send_error_indication(
-                gnb, &target_ue->ran_ue_ngap_id, &target_ue->amf_ue_ngap_id,
-                NGAP_Cause_PR_radioNetwork,
-                NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return;
-    }
     amf_ue = amf_ue_find_by_id(target_ue->amf_ue_id);
     if (!amf_ue) {
         ogs_error("Cannot find AMF-UE Context [%lld]",
@@ -4901,6 +4889,19 @@ void ngap_handle_handover_notification(
                 gnb, &target_ue->ran_ue_ngap_id, &target_ue->amf_ue_ngap_id,
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
+    source_ue = ran_ue_find_by_id(target_ue->source_ue_id);
+    if (!source_ue && !amf_ue->handover.inter_amf_target) {
+        ogs_error("Cannot find Source-UE Context [%lld]",
+                (long long)amf_ue_ngap_id);
+        r = ngap_send_error_indication(
+                gnb, &target_ue->ran_ue_ngap_id, &target_ue->amf_ue_ngap_id,
+                NGAP_Cause_PR_radioNetwork,
+                NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
         return;
@@ -4945,12 +4946,17 @@ void ngap_handle_handover_notification(
     ogs_ngap_ASN_to_5gs_tai(
             UserLocationInformationNR->tAI, &target_ue->saved.nr_tai);
 
-    ogs_debug("    Source : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
-        (long long)source_ue->ran_ue_ngap_id,
-        (long long)source_ue->amf_ue_ngap_id);
-    ogs_debug("    Source : TAC[%d] CellID[0x%llx]",
-        source_ue->saved.nr_tai.tac.v,
-        (long long)source_ue->saved.nr_cgi.cell_id);
+    if (source_ue) {
+        ogs_debug("    Source : RAN_UE_NGAP_ID[%lld] "
+                "AMF_UE_NGAP_ID[%lld] ",
+                (long long)source_ue->ran_ue_ngap_id,
+                (long long)source_ue->amf_ue_ngap_id);
+        ogs_debug("    Source : TAC[%d] CellID[0x%llx]",
+                source_ue->saved.nr_tai.tac.v,
+                (long long)source_ue->saved.nr_cgi.cell_id);
+    } else {
+        ogs_debug("    Source : remote AMF");
+    }
     ogs_debug("    Target : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
         (long long)target_ue->ran_ue_ngap_id,
         (long long)target_ue->amf_ue_ngap_id);
@@ -4964,13 +4970,15 @@ void ngap_handle_handover_notification(
     memcpy(&amf_ue->nr_cgi, &target_ue->saved.nr_cgi, sizeof(ogs_nr_cgi_t));
     amf_ue->nr_cgi_gnb_id_length = target_ue->saved.nr_cgi_gnb_id_length;
 
-    r = ngap_send_ran_ue_context_release_command(source_ue,
-            NGAP_Cause_PR_radioNetwork,
-            NGAP_CauseRadioNetwork_successful_handover,
-            NGAP_UE_CTX_REL_NG_HANDOVER_COMPLETE,
-            ogs_local_conf()->time.handover.duration);
-    ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
+    if (source_ue) {
+        r = ngap_send_ran_ue_context_release_command(source_ue,
+                NGAP_Cause_PR_radioNetwork,
+                NGAP_CauseRadioNetwork_successful_handover,
+                NGAP_UE_CTX_REL_NG_HANDOVER_COMPLETE,
+                ogs_local_conf()->time.handover.duration);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+    }
 
     /* Save the number of ongoing SMF transactions before processing sessions */
     xact_count = amf_sess_xact_count(amf_ue);
@@ -4988,7 +4996,8 @@ void ngap_handle_handover_notification(
         r = amf_sess_sbi_discover_and_send(
                 OpenAPI_service_name_nsmf_pdusession, NULL,
                 amf_nsmf_pdusession_build_update_sm_context,
-                source_ue, sess, AMF_UPDATE_SM_CONTEXT_HANDOVER_NOTIFY, &param);
+                amf_ue->handover.inter_amf_target ? target_ue : source_ue,
+                sess, AMF_UPDATE_SM_CONTEXT_HANDOVER_NOTIFY, &param);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
     }
@@ -4999,7 +5008,8 @@ void ngap_handle_handover_notification(
      */
     if (xact_count == amf_sess_xact_count(amf_ue)) {
         ogs_error("No SMF sessions were processed");
-        r = ngap_send_error_indication2(source_ue,
+        r = ngap_send_error_indication2(
+                amf_ue->handover.inter_amf_target ? target_ue : source_ue,
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_partial_handover);
         ogs_expect(r == OGS_OK);
