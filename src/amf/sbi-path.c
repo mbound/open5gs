@@ -331,6 +331,54 @@ int amf_sess_sbi_discover_and_send(
 
     return OGS_OK;
 }
+int amf_sess_sbi_discover_and_send_handover(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
+        ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data)
+{
+    int rv;
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_assert(service_name);
+    ogs_assert(ran_ue);
+    ogs_assert(sess);
+    ogs_assert(build);
+
+    sess->ran_ue_id = ran_ue->id;
+
+    xact = ogs_sbi_xact_add(
+            sess->id, &sess->sbi, service_name, discovery_option,
+            (ogs_sbi_build_f)build, sess, data);
+    if (!xact) {
+        ogs_error("[%d] Cannot create handover session SBI transaction",
+                sess->psi);
+        return OGS_ERROR;
+    }
+
+    {
+        amf_sbi_xact_ctx_t *ctx = ogs_calloc(1, sizeof(*ctx));
+        ogs_assert(ctx);
+
+        ctx->ran_ue_id = ran_ue->id;
+        ctx->target_ue_id = ran_ue->target_ue_id;
+
+        xact->user_data = ctx;
+        xact->user_data_free = amf_sbi_xact_ctx_free;
+    }
+
+    xact->state = state;
+
+    rv = ogs_sbi_discover_and_send(xact);
+    if (rv != OGS_OK) {
+        ogs_error("[%d] Cannot send handover session SBI request [error:%d]",
+                sess->psi, rv);
+        ogs_sbi_xact_remove(xact);
+    }
+
+    return rv;
+}
+
 static int client_discover_cb(
         int status, ogs_sbi_response_t *response, void *data)
 {
