@@ -686,7 +686,8 @@ OpenAPI_ng_ran_target_id_t *amf_nsmf_pdusession_build_target_id(
             gNB_ID->choice.gNB_ID.size,
             gNbId->g_nb_value,
             OGS_KEYSTRLEN(gNB_ID->choice.gNB_ID.size));
-    gNbId->bit_length = 32 - gNB_ID->choice.gNB_ID.bits_unused;
+    gNbId->bit_length =
+        gNB_ID->choice.gNB_ID.size * 8 - gNB_ID->choice.gNB_ID.bits_unused;
 
     targetId->tai = tai = ogs_calloc(1, sizeof(*tai));;
     if (!targetId->tai) {
