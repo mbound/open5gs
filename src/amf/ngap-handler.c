@@ -4146,18 +4146,6 @@ void ngap_handle_handover_request_ack(
         return;
     }
 
-    source_ue = ran_ue_find_by_id(target_ue->source_ue_id);
-    if (!source_ue) {
-        ogs_error("Cannot find Source-UE Context [%lld]",
-                (long long)amf_ue_ngap_id);
-        r = ngap_send_error_indication(
-                gnb, (uint64_t *)RAN_UE_NGAP_ID, &target_ue->amf_ue_ngap_id,
-                NGAP_Cause_PR_radioNetwork,
-                NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return;
-    }
     amf_ue = amf_ue_find_by_id(target_ue->amf_ue_id);
     if (!amf_ue) {
         ogs_error("Cannot find AMF-UE Context [%lld]",
@@ -4171,6 +4159,19 @@ void ngap_handle_handover_request_ack(
         return;
     }
 
+    source_ue = ran_ue_find_by_id(target_ue->source_ue_id);
+    if (!source_ue && !amf_ue->handover.inter_amf_target) {
+        ogs_error("Cannot find Source-UE Context [%lld]",
+                (long long)amf_ue_ngap_id);
+        r = ngap_send_error_indication(
+                gnb, (uint64_t *)RAN_UE_NGAP_ID, &target_ue->amf_ue_ngap_id,
+                NGAP_Cause_PR_radioNetwork,
+                NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
     /*
      * The RAN UE NGAP ID assigned by the target gNB is stored only after
      * the sender is confirmed to own the Target-UE context and the
@@ -4178,9 +4179,14 @@ void ngap_handle_handover_request_ack(
      */
     target_ue->ran_ue_ngap_id = *RAN_UE_NGAP_ID;
 
-    ogs_debug("    Source : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
-        (long long)source_ue->ran_ue_ngap_id,
-        (long long)source_ue->amf_ue_ngap_id);
+    if (source_ue) {
+        ogs_debug("    Source : RAN_UE_NGAP_ID[%lld] "
+                "AMF_UE_NGAP_ID[%lld] ",
+                (long long)source_ue->ran_ue_ngap_id,
+                (long long)source_ue->amf_ue_ngap_id);
+    } else {
+        ogs_debug("    Source : remote AMF");
+    }
     ogs_debug("    Target : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
         (long long)target_ue->ran_ue_ngap_id,
         (long long)target_ue->amf_ue_ngap_id);
@@ -4272,11 +4278,19 @@ void ngap_handle_handover_request_ack(
 
         param.hoState = OpenAPI_ho_state_PREPARED;
 
-        r = amf_sess_sbi_discover_and_send(
-                OpenAPI_service_name_nsmf_pdusession, NULL,
-                amf_nsmf_pdusession_build_update_sm_context,
-                target_ue, sess,
-                AMF_UPDATE_SM_CONTEXT_HANDOVER_REQ_ACK, &param);
+        if (amf_ue->handover.inter_amf_target) {
+            r = amf_sess_sbi_discover_and_send_handover(
+                    OpenAPI_service_name_nsmf_pdusession, NULL,
+                    amf_nsmf_pdusession_build_update_sm_context,
+                    target_ue, sess,
+                    AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQ_ACK, &param);
+        } else {
+            r = amf_sess_sbi_discover_and_send(
+                    OpenAPI_service_name_nsmf_pdusession, NULL,
+                    amf_nsmf_pdusession_build_update_sm_context,
+                    target_ue, sess,
+                    AMF_UPDATE_SM_CONTEXT_HANDOVER_REQ_ACK, &param);
+        }
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
 
