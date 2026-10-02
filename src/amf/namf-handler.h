@@ -38,6 +38,7 @@ int amf_namf_comm_handle_create_ue_context_request(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_comm_handle_create_ue_context_response(
         ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue);
+int amf_namf_comm_send_create_ue_context_response(amf_ue_t *amf_ue);
 int amf_namf_comm_handle_ue_context_transfer_request(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_comm_handle_ue_context_transfer_response(
