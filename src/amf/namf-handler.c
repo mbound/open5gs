@@ -1538,22 +1538,12 @@ static void amf_namf_comm_decode_ue_mm_context_list(
 static void amf_namf_comm_decode_ue_session_context_list(
             amf_ue_t *amf_ue, OpenAPI_list_t *SessionContextList);
 
-int amf_namf_comm_handle_ue_context_transfer_response(
-        ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue)
+static int amf_namf_comm_decode_ue_context(
+        amf_ue_t *amf_ue, OpenAPI_ue_context_t *UeContext,
+        bool save_to_release_session_list)
 {
-    OpenAPI_ue_context_t *UeContext = NULL;
-
-    if (!recvmsg->UeContextTransferRspData) {
-        ogs_error("No UeContextTransferRspData");
-        return OGS_ERROR;
-    }
-
-    if (!recvmsg->UeContextTransferRspData->ue_context) {
-        ogs_error("No UE context");
-        return OGS_ERROR;
-    }
-
-    UeContext = recvmsg->UeContextTransferRspData->ue_context;
+    ogs_assert(amf_ue);
+    ogs_assert(UeContext);
 
     if (!UeContext->supi) {
         ogs_error("No SUPI");
@@ -1561,9 +1551,8 @@ int amf_namf_comm_handle_ue_context_transfer_response(
     }
 
     amf_ue_set_supi(amf_ue, UeContext->supi);
-    if (!UeContext->supi_unauth_ind){
+    if (!UeContext->supi_unauth_ind)
         amf_ue->auth_result = OpenAPI_auth_result_AUTHENTICATION_SUCCESS;
-    }
 
     if (UeContext->pei) {
         if (amf_ue->pei)
@@ -1572,24 +1561,40 @@ int amf_namf_comm_handle_ue_context_transfer_response(
     }
 
     if (UeContext->sub_ue_ambr) {
-        amf_ue->ue_ambr.downlink =
-            ogs_sbi_bitrate_from_string(UeContext->sub_ue_ambr->downlink);
-        amf_ue->ue_ambr.uplink =
-            ogs_sbi_bitrate_from_string(UeContext->sub_ue_ambr->uplink);
+        if (UeContext->sub_ue_ambr->downlink)
+            amf_ue->ue_ambr.downlink =
+                ogs_sbi_bitrate_from_string(UeContext->sub_ue_ambr->downlink);
+        if (UeContext->sub_ue_ambr->uplink)
+            amf_ue->ue_ambr.uplink =
+                ogs_sbi_bitrate_from_string(UeContext->sub_ue_ambr->uplink);
     }
 
     if (UeContext->seaf_data) {
+        if (!UeContext->seaf_data->ng_ksi ||
+            !UeContext->seaf_data->key_amf ||
+            !UeContext->seaf_data->key_amf->key_val) {
+            ogs_error("[%s] Incomplete SEAF data", UeContext->supi);
+            return OGS_ERROR;
+        }
+
         if (UeContext->seaf_data->ng_ksi->tsc != OpenAPI_sc_type_NULL) {
             amf_ue->nas.ue.tsc =
                 (UeContext->seaf_data->ng_ksi->tsc ==
                  OpenAPI_sc_type_NATIVE) ? 0 : 1;
-            amf_ue->nas.ue.ksi = (uint8_t)UeContext->seaf_data->ng_ksi->ksi;
+            amf_ue->nas.ue.ksi =
+                (uint8_t)UeContext->seaf_data->ng_ksi->ksi;
 
             ogs_ascii_to_hex(
                 UeContext->seaf_data->key_amf->key_val,
                 strlen(UeContext->seaf_data->key_amf->key_val),
-                amf_ue->kamf,
-                sizeof(amf_ue->kamf));
+                amf_ue->kamf, sizeof(amf_ue->kamf));
+
+            /*
+             * A transferred KAMF is a usable 5GS NAS security context.
+             * The MM-context decoder restores the selected algorithms and
+             * NAS counters; mark the context available only after both
+             * pieces have been decoded below.
+             */
         }
     }
 
@@ -1618,13 +1623,34 @@ int amf_namf_comm_handle_ue_context_transfer_response(
     if (UeContext->session_context_list) {
         amf_namf_comm_decode_ue_session_context_list(
                 amf_ue, UeContext->session_context_list);
-        /* Save a list of sessions to be released on old AMF */
-        if (UeContext->mm_context_list)
+
+        if (save_to_release_session_list && UeContext->mm_context_list)
             amf_ue_save_to_release_session_list(amf_ue);
     }
+
+    if (UeContext->seaf_data)
+        amf_ue->security_context_available = 1;
+
     /* TODO ueRadioCapability */
 
     return OGS_OK;
+}
+
+int amf_namf_comm_handle_ue_context_transfer_response(
+        ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue)
+{
+    if (!recvmsg->UeContextTransferRspData) {
+        ogs_error("No UeContextTransferRspData");
+        return OGS_ERROR;
+    }
+
+    if (!recvmsg->UeContextTransferRspData->ue_context) {
+        ogs_error("No UE context");
+        return OGS_ERROR;
+    }
+
+    return amf_namf_comm_decode_ue_context(
+            amf_ue, recvmsg->UeContextTransferRspData->ue_context, true);
 }
 
 static ogs_nas_5gmm_capability_t
