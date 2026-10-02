@@ -26,12 +26,21 @@ extern "C" {
 
 #include "context.h"
 
+typedef struct amf_namf_comm_create_ue_context_param_s {
+    NGAP_TargetID_t *target_id;
+    NGAP_PDUSessionResourceListHORqd_t *pdu_session_list;
+    NGAP_SourceToTarget_TransparentContainer_t *source_to_target_container;
+    NGAP_Cause_t *cause;
+} amf_namf_comm_create_ue_context_param_t;
+
 OpenAPI_list_t *amf_namf_comm_encode_ue_session_context_list(
         amf_ue_t *amf_ue);
 OpenAPI_list_t *amf_namf_comm_encode_ue_mm_context_list(
         amf_ue_t *amf_ue);
 char *amf_namf_comm_base64_encode_5gmm_capability(amf_ue_t *amf_ue);
 
+ogs_sbi_request_t *amf_namf_comm_build_create_ue_context(
+        amf_ue_t *amf_ue, void *data);
 ogs_sbi_request_t *amf_namf_comm_build_ue_context_transfer(
         amf_ue_t *amf_ue, void *data);
 ogs_sbi_request_t *amf_namf_comm_build_registration_status_update(
