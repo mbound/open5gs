@@ -99,6 +99,151 @@ int amf_namf_comm_handle_create_ue_context_request(
     return OGS_OK;
 }
 
+
+int amf_namf_comm_handle_create_ue_context_response(
+        ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue)
+{
+    int r;
+    ran_ue_t *source_ue = NULL;
+    amf_sess_t *sess = NULL;
+    OpenAPI_ue_context_created_data_t *created = NULL;
+    OpenAPI_n2_info_content_t *n2_info = NULL;
+    OpenAPI_ref_to_binary_data_t *ref = NULL;
+    OpenAPI_lnode_t *node = NULL;
+    ogs_pkbuf_t *n2buf = NULL;
+    NGAP_Cause_t failure_cause;
+
+    ogs_assert(recvmsg);
+    ogs_assert(amf_ue);
+
+    source_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (!source_ue) {
+        ogs_error("[%s] Source NG context has already been removed",
+                amf_ue->supi);
+        return OGS_NOTFOUND;
+    }
+
+    if (recvmsg->res_status != OGS_SBI_HTTP_STATUS_CREATED) {
+        ogs_error("[%s] CreateUEContext failed [HTTP:%d]",
+                amf_ue->supi, recvmsg->res_status);
+        goto preparation_failure;
+    }
+
+    created = recvmsg->UeContextCreatedData;
+    if (!created || !created->ue_context ||
+        !created->target_to_source_data ||
+        !created->pdu_session_list ||
+        created->pdu_session_list->count == 0) {
+        ogs_error("[%s] Incomplete UeContextCreatedData", amf_ue->supi);
+        goto preparation_failure;
+    }
+
+    n2_info = created->target_to_source_data;
+    if (n2_info->ngap_ie_type != OpenAPI_ngap_ie_type_TAR_TO_SRC_CONTAINER ||
+        !n2_info->ngap_data || !n2_info->ngap_data->content_id) {
+        ogs_error("[%s] Invalid Target-to-Source Transparent Container",
+                amf_ue->supi);
+        goto preparation_failure;
+    }
+
+    ref = n2_info->ngap_data;
+    n2buf = ogs_sbi_find_part_by_content_id(recvmsg, ref->content_id);
+    if (!n2buf) {
+        ogs_error("[%s] Missing Target-to-Source binary part [%s]",
+                amf_ue->supi, ref->content_id);
+        goto preparation_failure;
+    }
+
+    OGS_ASN_CLEAR_DATA(&amf_ue->handover.container);
+    ogs_asn_buffer_to_OCTET_STRING(
+            n2buf->data, n2buf->len, &amf_ue->handover.container);
+
+    /* Do not let a previous handover leave stale Handover Command Transfer. */
+    AMF_UE_CLEAR_N2_TRANSFER(amf_ue, handover_command);
+
+    OpenAPI_list_for_each(created->pdu_session_list, node) {
+        OpenAPI_n2_sm_information_t *n2sm = node->data;
+        ogs_pkbuf_t *copy = NULL;
+
+        if (!n2sm ||
+            n2sm->pdu_session_id ==
+                OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED ||
+            !n2sm->n2_info_content) {
+            ogs_error("[%s] Invalid PDU session in CreateUEContext response",
+                    amf_ue->supi);
+            goto preparation_failure;
+        }
+
+        sess = amf_sess_find_by_psi(amf_ue, n2sm->pdu_session_id);
+        if (!sess) {
+            ogs_error("[%s:%d] Unknown PDU session in CreateUEContext response",
+                    amf_ue->supi, n2sm->pdu_session_id);
+            goto preparation_failure;
+        }
+
+        n2_info = n2sm->n2_info_content;
+        if (n2_info->ngap_ie_type != OpenAPI_ngap_ie_type_HANDOVER_CMD ||
+            !n2_info->ngap_data || !n2_info->ngap_data->content_id) {
+            ogs_error("[%s:%d] Invalid Handover Command Transfer",
+                    amf_ue->supi, sess->psi);
+            goto preparation_failure;
+        }
+
+        n2buf = ogs_sbi_find_part_by_content_id(
+                recvmsg, n2_info->ngap_data->content_id);
+        if (!n2buf) {
+            ogs_error("[%s:%d] Missing Handover Command binary part [%s]",
+                    amf_ue->supi, sess->psi,
+                    n2_info->ngap_data->content_id);
+            goto preparation_failure;
+        }
+
+        copy = ogs_pkbuf_copy(n2buf);
+        if (!copy) {
+            ogs_error("[%s:%d] Cannot copy Handover Command Transfer",
+                    amf_ue->supi, sess->psi);
+            goto preparation_failure;
+        }
+        AMF_SESS_STORE_N2_TRANSFER(sess, handover_command, copy);
+    }
+
+    if (created->failed_session_list &&
+            created->failed_session_list->count) {
+        /*
+         * M1 intentionally targets a single successfully handed-over PDU
+         * session.  Do not silently drop Handover Preparation Unsuccessful
+         * Transfer IEs; support for the NGAP release list is a later
+         * increment.
+         */
+        ogs_error("[%s] failedSessionList is not supported in M1",
+                amf_ue->supi);
+        goto preparation_failure;
+    }
+
+    r = ngap_send_handover_command(amf_ue);
+    if (r != OGS_OK) {
+        ogs_error("[%s] Cannot send HandoverCommand [error:%d]",
+                amf_ue->supi, r);
+        return r;
+    }
+
+    ogs_info("[%s] Inter-AMF handover preparation completed at source AMF",
+            amf_ue->supi);
+    return OGS_OK;
+
+preparation_failure:
+    AMF_UE_CLEAR_N2_TRANSFER(amf_ue, handover_command);
+
+    memset(&failure_cause, 0, sizeof(failure_cause));
+    failure_cause.present = NGAP_Cause_PR_radioNetwork;
+    failure_cause.choice.radioNetwork =
+        NGAP_CauseRadioNetwork_ho_failure_in_target_5GC_ngran_node_or_target_system;
+
+    r = ngap_send_handover_preparation_failure(source_ue, &failure_cause);
+    ogs_expect(r == OGS_OK);
+    return OGS_ERROR;
+}
+
 int amf_namf_comm_handle_n1_n2_message_transfer(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
 {
