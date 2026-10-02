@@ -24,6 +24,71 @@
 #include "ngap-path.h"
 #include "sbi-path.h"
 
+int amf_namf_comm_handle_create_ue_context_request(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
+{
+    OpenAPI_ue_context_create_data_t *UeContextCreateData = NULL;
+    char *ue_context_id = NULL;
+
+    ogs_assert(stream);
+    ogs_assert(recvmsg);
+
+    UeContextCreateData = recvmsg->UeContextCreateData;
+    if (!UeContextCreateData) {
+        ogs_error("No UeContextCreateData");
+        return OGS_ERROR;
+    }
+
+    ue_context_id = recvmsg->h.resource.component[1];
+    if (!ue_context_id) {
+        ogs_error("No UE Context ID");
+        return OGS_ERROR;
+    }
+
+    /*
+     * TS 29.518 UeContextCreateData mandatory attributes.
+     *
+     * Keep this validation at the Namf boundary.  Target-AMF handover
+     * preparation must never create a partial AMF-UE context and then
+     * discover that the source request was structurally incomplete.
+     */
+    if (!UeContextCreateData->ue_context) {
+        ogs_error("[%s] No ueContext", ue_context_id);
+        return OGS_ERROR;
+    }
+    if (!UeContextCreateData->target_id) {
+        ogs_error("[%s] No targetId", ue_context_id);
+        return OGS_ERROR;
+    }
+    if (!UeContextCreateData->source_to_target_data) {
+        ogs_error("[%s] No sourceToTargetData", ue_context_id);
+        return OGS_ERROR;
+    }
+    if (!UeContextCreateData->pdu_session_list ||
+            UeContextCreateData->pdu_session_list->count == 0) {
+        ogs_error("[%s] No pduSessionList", ue_context_id);
+        return OGS_ERROR;
+    }
+
+    /*
+     * M1-B only establishes the standards-defined server seam.
+     * The target-AMF state reconstruction and asynchronous completion on
+     * HandoverRequestAcknowledge are added in the next increments.
+     *
+     * Do not return 201 until that state machine exists: doing so would make
+     * the source AMF believe that target resources have been prepared.
+     */
+    ogs_warn("[%s] CreateUEContext target-AMF preparation not implemented",
+            ue_context_id);
+
+    ogs_assert(true == ogs_sbi_server_send_error(
+            stream, OGS_SBI_HTTP_STATUS_NOT_IMPLEMENTED, recvmsg,
+            "CreateUEContext target-AMF preparation not implemented",
+            NULL, NULL));
+
+    return OGS_OK;
+}
+
 int amf_namf_comm_handle_n1_n2_message_transfer(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
 {
