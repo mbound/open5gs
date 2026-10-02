@@ -369,6 +369,21 @@ int amf_sess_sbi_discover_and_send_handover(
 
     xact->state = state;
 
+    /*
+     * Target-AMF handover preparation is subordinate to the inbound
+     * CreateUEContext request.  Associate the SMF transaction with that
+     * server stream so lib/sbi cancels it if the source AMF abandons the
+     * request before handover preparation completes.
+     */
+    {
+        amf_ue_t *amf_ue = amf_ue_find_by_id(sess->amf_ue_id);
+        if (amf_ue && amf_ue->handover.inter_amf_target &&
+            amf_ue->handover.create_ue_context_stream_id >= OGS_MIN_POOL_ID &&
+            amf_ue->handover.create_ue_context_stream_id <= OGS_MAX_POOL_ID)
+            xact->assoc_stream_id =
+                amf_ue->handover.create_ue_context_stream_id;
+    }
+
     rv = ogs_sbi_discover_and_send(xact);
     if (rv != OGS_OK) {
         ogs_error("[%d] Cannot send handover session SBI request [error:%d]",
