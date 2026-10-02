@@ -113,6 +113,11 @@ int amf_sess_sbi_discover_and_send(
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
         ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data);
+int amf_sess_sbi_discover_and_send_handover(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
+        ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data);
 
 int amf_sess_sbi_discover_by_nsi(
         ran_ue_t *ran_ue, amf_sess_t *sess,
