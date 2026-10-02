@@ -292,6 +292,7 @@ ogs_sbi_request_t *amf_namf_comm_build_create_ue_context(
     OpenAPI_ng_ap_cause_t NgapCause;
 
     char hxkamf_string[OGS_KEYSTRLEN(OGS_SHA256_DIGEST_SIZE)];
+    char hxnh_string[OGS_KEYSTRLEN(OGS_SHA256_DIGEST_SIZE)];
     char *encoded_gmm_capability = NULL;
     int i;
 
@@ -361,6 +362,18 @@ ogs_sbi_request_t *amf_namf_comm_build_create_ue_context(
 
         SeafData.ng_ksi = &NgKsi;
         SeafData.key_amf = &KeyAmf;
+
+        /*
+         * TS 29.518 SeafData carries the current NH and NCC.  They are
+         * required by the target AMF to construct the NGAP SecurityContext
+         * in HandoverRequest without restarting the NH chain.
+         */
+        ogs_hex_to_ascii(amf_ue->nh, sizeof(amf_ue->nh),
+                hxnh_string, sizeof(hxnh_string));
+        SeafData.nh = hxnh_string;
+        SeafData.is_ncc = true;
+        SeafData.ncc = amf_ue->nhcc;
+
         UeContext.seaf_data = &SeafData;
     }
 
