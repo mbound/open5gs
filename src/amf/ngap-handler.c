@@ -3810,6 +3810,15 @@ void ngap_handle_handover_required(
         ogs_sbi_discovery_option_add_requester_plmn_list(
                 discovery_option, &amf_ue->nr_tai.plmn_id);
 
+        /*
+         * Advance the NH chain before transferring the security context.
+         * This mirrors the existing same-AMF N2 handover path: the target
+         * RAN receives the next NH/NCC pair, while the target AMF receives
+         * exactly that pair in SeafData over Namf_Communication.
+         */
+        amf_ue->nhcc++;
+        ogs_kdf_nh_gnb(amf_ue->kamf, amf_ue->nh, amf_ue->nh);
+
         memset(&create_param, 0, sizeof(create_param));
         create_param.target_id = TargetID;
         create_param.pdu_session_list = PDUSessionList;
