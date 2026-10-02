@@ -2080,8 +2080,23 @@ static int amf_namf_comm_decode_ue_context(
         UeContext->mm_context_list) {
         amf_ue->nas.amf.tsc = amf_ue->nas.ue.tsc;
         amf_ue->nas.amf.ksi = amf_ue->nas.ue.ksi;
+
+        /*
+         * TS 33.501 Annex A.8: the target AMF receives KAMF plus the
+         * selected NAS algorithms in the transferred MM context.  Rebuild
+         * KNASint/KNASenc locally so post-handover NAS protection continues
+         * with the transferred security context.
+         */
+        ogs_kdf_nas_5gs(OGS_KDF_NAS_INT_ALG,
+                amf_ue->selected_int_algorithm,
+                amf_ue->kamf, amf_ue->knas_int);
+        ogs_kdf_nas_5gs(OGS_KDF_NAS_ENC_ALG,
+                amf_ue->selected_enc_algorithm,
+                amf_ue->kamf, amf_ue->knas_enc);
+
         amf_ue->security_context_available = 1;
         amf_ue->mac_failed = 0;
+        amf_ue->ul_count_accepted = true;
     }
 
     /* TODO ueRadioCapability */
