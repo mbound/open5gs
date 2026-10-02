@@ -360,6 +360,174 @@ cleanup:
     return OGS_ERROR;
 }
 
+int amf_namf_comm_send_create_ue_context_response(amf_ue_t *amf_ue)
+{
+    int i, rv = OGS_ERROR;
+    ogs_sbi_stream_t *stream = NULL;
+    ogs_sbi_message_t sendmsg;
+    ogs_sbi_response_t *response = NULL;
+    OpenAPI_ue_context_created_data_t CreatedData;
+    OpenAPI_ue_context_t UeContext;
+    OpenAPI_n2_info_content_t TargetToSourceData;
+    OpenAPI_ref_to_binary_data_t TargetToSourceRef;
+    OpenAPI_list_t *PduSessionList = NULL;
+    OpenAPI_lnode_t *node = NULL;
+    amf_sess_t *sess = NULL;
+
+    ogs_assert(amf_ue);
+
+    if (!amf_ue->handover.inter_amf_target ||
+        amf_ue->handover.create_ue_context_stream_id < OGS_MIN_POOL_ID ||
+        amf_ue->handover.create_ue_context_stream_id > OGS_MAX_POOL_ID) {
+        ogs_error("[%s] No pending CreateUEContext transaction",
+                amf_ue->supi);
+        return OGS_ERROR;
+    }
+
+    stream = ogs_sbi_stream_find_by_id(
+            amf_ue->handover.create_ue_context_stream_id);
+    if (!stream) {
+        ogs_error("[%s] CreateUEContext stream has already been removed",
+                amf_ue->supi);
+        amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
+        return OGS_NOTFOUND;
+    }
+
+    memset(&sendmsg, 0, sizeof(sendmsg));
+    memset(&CreatedData, 0, sizeof(CreatedData));
+    memset(&UeContext, 0, sizeof(UeContext));
+    memset(&TargetToSourceData, 0, sizeof(TargetToSourceData));
+    memset(&TargetToSourceRef, 0, sizeof(TargetToSourceRef));
+
+    UeContext.supi = amf_ue->supi;
+    CreatedData.ue_context = &UeContext;
+
+    if (!amf_ue->handover.container.buf ||
+        !amf_ue->handover.container.size) {
+        ogs_error("[%s] No Target-to-Source Transparent Container",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    TargetToSourceRef.content_id = (char *)"target-to-source-container";
+    TargetToSourceData.ngap_ie_type =
+        OpenAPI_ngap_ie_type_TAR_TO_SRC_CONTAINER;
+    TargetToSourceData.ngap_data = &TargetToSourceRef;
+    CreatedData.target_to_source_data = &TargetToSourceData;
+
+    sendmsg.part[sendmsg.num_of_part].pkbuf =
+        ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
+    if (!sendmsg.part[sendmsg.num_of_part].pkbuf)
+        goto cleanup;
+    ogs_pkbuf_put_data(sendmsg.part[sendmsg.num_of_part].pkbuf,
+            amf_ue->handover.container.buf,
+            amf_ue->handover.container.size);
+    sendmsg.part[sendmsg.num_of_part].content_id =
+        TargetToSourceRef.content_id;
+    sendmsg.part[sendmsg.num_of_part].content_type =
+        (char *)OGS_SBI_CONTENT_NGAP_TYPE;
+    sendmsg.num_of_part++;
+
+    PduSessionList = OpenAPI_list_create();
+    ogs_assert(PduSessionList);
+
+    ogs_list_for_each(&amf_ue->sess_list, sess) {
+        OpenAPI_n2_sm_information_t *N2SmInformation = NULL;
+        OpenAPI_n2_info_content_t *N2InfoContent = NULL;
+        OpenAPI_ref_to_binary_data_t *N2Ref = NULL;
+        OpenAPI_snssai_t *SNssai = NULL;
+        char *content_id = NULL;
+
+        if (!sess->transfer.handover_command)
+            continue;
+
+        if (sendmsg.num_of_part >= OGS_SBI_MAX_NUM_OF_PART) {
+            ogs_error("[%s] Too many CreateUEContext response parts",
+                    amf_ue->supi);
+            goto cleanup;
+        }
+
+        N2SmInformation = ogs_calloc(1, sizeof(*N2SmInformation));
+        N2InfoContent = ogs_calloc(1, sizeof(*N2InfoContent));
+        N2Ref = ogs_calloc(1, sizeof(*N2Ref));
+        SNssai = ogs_calloc(1, sizeof(*SNssai));
+        ogs_assert(N2SmInformation);
+        ogs_assert(N2InfoContent);
+        ogs_assert(N2Ref);
+        ogs_assert(SNssai);
+
+        content_id = ogs_msprintf("handover-command-%d", sess->psi);
+        ogs_assert(content_id);
+
+        N2Ref->content_id = content_id;
+        N2InfoContent->ngap_ie_type = OpenAPI_ngap_ie_type_HANDOVER_CMD;
+        N2InfoContent->ngap_data = N2Ref;
+
+        SNssai->sst = sess->s_nssai.sst;
+        SNssai->sd = ogs_s_nssai_sd_to_string(sess->s_nssai.sd);
+
+        N2SmInformation->pdu_session_id = sess->psi;
+        N2SmInformation->n2_info_content = N2InfoContent;
+        N2SmInformation->s_nssai = SNssai;
+        OpenAPI_list_add(PduSessionList, N2SmInformation);
+
+        sendmsg.part[sendmsg.num_of_part].pkbuf =
+            ogs_pkbuf_copy(sess->transfer.handover_command);
+        if (!sendmsg.part[sendmsg.num_of_part].pkbuf)
+            goto cleanup;
+        sendmsg.part[sendmsg.num_of_part].content_id = content_id;
+        sendmsg.part[sendmsg.num_of_part].content_type =
+            (char *)OGS_SBI_CONTENT_NGAP_TYPE;
+        sendmsg.num_of_part++;
+    }
+
+    if (!PduSessionList->count) {
+        ogs_error("[%s] No prepared PDU session for CreateUEContext response",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    CreatedData.pdu_session_list = PduSessionList;
+    sendmsg.UeContextCreatedData = &CreatedData;
+
+    response = ogs_sbi_build_response(
+            &sendmsg, OGS_SBI_HTTP_STATUS_CREATED);
+    if (!response) {
+        ogs_error("[%s] Cannot build CreateUEContext response",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    if (ogs_sbi_server_send_response(stream, response) != true) {
+        ogs_error("[%s] Cannot send CreateUEContext response",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    ogs_info("[%s] Target AMF completed CreateUEContext", amf_ue->supi);
+    amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
+    rv = OGS_OK;
+
+cleanup:
+    for (i = 0; i < sendmsg.num_of_part; i++) {
+        if (sendmsg.part[i].pkbuf) {
+            ogs_pkbuf_free(sendmsg.part[i].pkbuf);
+            sendmsg.part[i].pkbuf = NULL;
+        }
+    }
+
+    if (PduSessionList) {
+        OpenAPI_list_for_each(PduSessionList, node) {
+            OpenAPI_n2_sm_information_t *n2 = node->data;
+            OpenAPI_n2_sm_information_free(n2);
+        }
+        OpenAPI_list_free(PduSessionList);
+    }
+
+    return rv;
+}
+
+
 int amf_namf_comm_handle_create_ue_context_response(
         ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue)
 {
