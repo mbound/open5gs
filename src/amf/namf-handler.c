@@ -69,6 +69,15 @@ int amf_namf_comm_handle_create_ue_context_request(
         ogs_error("[%s] No pduSessionList", ue_context_id);
         return OGS_ERROR;
     }
+    /*
+     * TS 29.518 marks n2NotifyUri mandatory for CreateUEContext even though
+     * the generated OpenAPI YAML does not include it in the required array.
+     * Enforce the normative operation/type-table requirement explicitly.
+     */
+    if (!UeContextCreateData->n2_notify_uri) {
+        ogs_error("[%s] No n2NotifyUri", ue_context_id);
+        return OGS_ERROR;
+    }
 
     /*
      * M1-B only establishes the standards-defined server seam.
