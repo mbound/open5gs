@@ -34,6 +34,8 @@ int amf_namf_callback_handle_dereg_notify(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_callback_handle_sdm_data_change_notify(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
+int amf_namf_comm_handle_create_ue_context_request(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_comm_handle_ue_context_transfer_request(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_comm_handle_ue_context_transfer_response(
