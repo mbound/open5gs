@@ -85,6 +85,7 @@ bool amf_sbi_send_request(
 #define AMF_REMOVE_S1_CONTEXT_BY_RESET_ALL              52
 #define AMF_REMOVE_S1_CONTEXT_BY_RESET_PARTIAL          53
 #define AMF_REMOVE_N2_CONTEXT_BY_ERROR_INDICATION       54
+#define AMF_CREATE_UE_CONTEXT_HANDOVER_REQUIRED         61
 
 /*
  * TS23.502
@@ -100,6 +101,11 @@ int amf_ue_sbi_discover_and_send(
         ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
         amf_ue_t *amf_ue, int state, void *data);
 int amf_ue_sbi_discover_and_send_eir(amf_ue_t *amf_ue);
+int amf_ue_sbi_discover_and_send_handover(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
+        amf_ue_t *amf_ue, int state, void *data);
 int amf_sess_sbi_discover_and_send(
         OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option,
