@@ -1584,10 +1584,28 @@ static int amf_namf_comm_decode_ue_context(
             amf_ue->nas.ue.ksi =
                 (uint8_t)UeContext->seaf_data->ng_ksi->ksi;
 
-            ogs_ascii_to_hex(
-                UeContext->seaf_data->key_amf->key_val,
-                strlen(UeContext->seaf_data->key_amf->key_val),
-                amf_ue->kamf, sizeof(amf_ue->kamf));
+            if (ogs_ascii_to_hex_checked(
+                    UeContext->seaf_data->key_amf->key_val,
+                    strlen(UeContext->seaf_data->key_amf->key_val),
+                    amf_ue->kamf, sizeof(amf_ue->kamf)) != OGS_OK) {
+                ogs_error("[%s] Invalid transferred AMF key", UeContext->supi);
+                return OGS_ERROR;
+            }
+
+            if (UeContext->seaf_data->nh) {
+                if (!UeContext->seaf_data->is_ncc ||
+                    UeContext->seaf_data->ncc < 0 ||
+                    UeContext->seaf_data->ncc > 7 ||
+                    ogs_ascii_to_hex_checked(
+                        UeContext->seaf_data->nh,
+                        strlen(UeContext->seaf_data->nh),
+                        amf_ue->nh, sizeof(amf_ue->nh)) != OGS_OK) {
+                    ogs_error("[%s] Invalid transferred NH/NCC",
+                            UeContext->supi);
+                    return OGS_ERROR;
+                }
+                amf_ue->nhcc = (uint8_t)UeContext->seaf_data->ncc;
+            }
 
             /*
              * A transferred KAMF is a usable 5GS NAS security context.
