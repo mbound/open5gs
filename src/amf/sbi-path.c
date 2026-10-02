@@ -177,6 +177,19 @@ int amf_ue_sbi_discover_and_send_handover(
     ogs_assert(amf_ue);
     ogs_assert(build);
 
+    /*
+     * A UE may already have used Namf_Communication against an old AMF
+     * (e.g. registration context transfer).  That per-UE cached service
+     * association must not override the target-TAI discovery for handover.
+     */
+    if (amf_ue->sbi.service_name_array[service_name].nf_instance_id) {
+        ogs_free(amf_ue->sbi.service_name_array[service_name].nf_instance_id);
+        amf_ue->sbi.service_name_array[service_name].nf_instance_id = NULL;
+#if ENABLE_VALIDITY_TIMEOUT
+        amf_ue->sbi.service_name_array[service_name].validity_timeout = 0;
+#endif
+    }
+
     xact = ogs_sbi_xact_add(
             amf_ue->id, &amf_ue->sbi, service_name, discovery_option,
             (ogs_sbi_build_f)build, amf_ue, data);
