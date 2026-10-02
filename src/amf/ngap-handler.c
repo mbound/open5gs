@@ -20,6 +20,7 @@
 #include "ngap-handler.h"
 #include "ngap-path.h"
 #include "sbi-path.h"
+#include "namf-build.h"
 #include "nas-path.h"
 
 static bool maximum_number_of_gnbs_is_reached(void)
@@ -3480,6 +3481,8 @@ void ngap_handle_handover_required(
 
     amf_gnb_t *target_gnb = NULL;
     uint32_t target_gnb_id;
+    bool inter_amf_handover = false;
+    ogs_5gs_tai_t target_tai;
 
     NGAP_InitiatingMessage_t *initiatingMessage = NULL;
     NGAP_HandoverRequired_t *HandoverRequired = NULL;
@@ -3696,13 +3699,14 @@ void ngap_handle_handover_required(
     ogs_ngap_GNB_ID_to_uint32(globalGNB_ID->gNB_ID, &target_gnb_id);
     target_gnb = amf_gnb_find_by_gnb_id(target_gnb_id);
     if (!target_gnb) {
-        ogs_error("Handover required : cannot find target gNB-id[0x%x]",
-                target_gnb_id);
-        r = ngap_send_error_indication2(source_ue,
-                NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return;
+        /*
+         * TS 23.502 4.9.1.3.2: when the target NG-RAN node is not served by
+         * this AMF, continue handover preparation through a target AMF
+         * instead of rejecting the Handover Required message.
+         */
+        inter_amf_handover = true;
+        ogs_info("Handover required : target gNB-id[0x%x] is not local; "
+                "select target AMF", target_gnb_id);
     }
 
     if (!PDUSessionList) {
@@ -3729,6 +3733,106 @@ void ngap_handle_handover_required(
                 NGAP_Cause_PR_nas, NGAP_CauseNas_authentication_failure);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
+    if (inter_amf_handover) {
+        ogs_sbi_discovery_option_t *discovery_option = NULL;
+        amf_namf_comm_create_ue_context_param_t create_param;
+        NGAP_Cause_t failure_cause;
+        int j;
+
+        if (!targetRANNodeID->selectedTAI) {
+            ogs_error("No selectedTAI in targetRANNodeID");
+            r = ngap_send_error_indication2(source_ue,
+                    NGAP_Cause_PR_protocol,
+                    NGAP_CauseProtocol_semantic_error);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+            return;
+        }
+
+        /*
+         * Preserve the source-side handover context while the
+         * Namf_Communication transaction is outstanding.
+         */
+        amf_ue->handover.type = *HandoverType;
+        amf_ue->handover.group = Cause->present;
+        amf_ue->handover.cause = (int)Cause->choice.radioNetwork;
+        OGS_ASN_STORE_DATA(&amf_ue->handover.container,
+                SourceToTarget_TransparentContainer);
+
+        /*
+         * Validate the session references before creating the SBI
+         * transaction.  The target AMF will contact the existing SMF(s),
+         * therefore every handed-over PDU session needs an SM context ref.
+         */
+        for (j = 0; j < OGS_ASN_LIST_COUNT(PDUSessionList); j++) {
+            amf_sess_t *sess = NULL;
+            NGAP_PDUSessionResourceItemHORqd_t *item = NULL;
+
+            item = (NGAP_PDUSessionResourceItemHORqd_t *)
+                OGS_ASN_LIST_GET(PDUSessionList, j);
+            if (!item ||
+                item->pDUSessionID ==
+                    OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED) {
+                ogs_error("Invalid PDU Session in inter-AMF handover");
+                r = ngap_send_error_indication2(source_ue,
+                        NGAP_Cause_PR_protocol,
+                        NGAP_CauseProtocol_semantic_error);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                return;
+            }
+
+            sess = amf_sess_find_by_psi(amf_ue, item->pDUSessionID);
+            if (!sess || !SESSION_CONTEXT_IN_SMF(sess)) {
+                ogs_error("[%s:%ld] No SM context for inter-AMF handover",
+                        amf_ue->supi, item->pDUSessionID);
+                r = ngap_send_error_indication2(source_ue,
+                        NGAP_Cause_PR_radioNetwork,
+                        NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                return;
+            }
+        }
+
+        memset(&target_tai, 0, sizeof(target_tai));
+        ogs_ngap_ASN_to_5gs_tai(
+                targetRANNodeID->selectedTAI, &target_tai);
+
+        discovery_option = ogs_sbi_discovery_option_new();
+        ogs_assert(discovery_option);
+        ogs_sbi_discovery_option_set_tai(discovery_option, &target_tai);
+        ogs_sbi_discovery_option_add_target_plmn_list(
+                discovery_option, &target_tai.plmn_id);
+        ogs_sbi_discovery_option_add_requester_plmn_list(
+                discovery_option, &amf_ue->nr_tai.plmn_id);
+
+        memset(&create_param, 0, sizeof(create_param));
+        create_param.target_id = TargetID;
+        create_param.pdu_session_list = PDUSessionList;
+        create_param.source_to_target_container =
+            SourceToTarget_TransparentContainer;
+        create_param.cause = Cause;
+
+        r = amf_ue_sbi_discover_and_send_handover(
+                OpenAPI_service_name_namf_comm, discovery_option,
+                amf_namf_comm_build_create_ue_context,
+                amf_ue, AMF_CREATE_UE_CONTEXT_HANDOVER_REQUIRED,
+                &create_param);
+        if (r != OGS_OK) {
+            memset(&failure_cause, 0, sizeof(failure_cause));
+            failure_cause.present = NGAP_Cause_PR_radioNetwork;
+            failure_cause.choice.radioNetwork =
+                NGAP_CauseRadioNetwork_ho_failure_in_target_5GC_ngran_node_or_target_system;
+
+            r = ngap_send_handover_preparation_failure(
+                    source_ue, &failure_cause);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+        }
         return;
     }
 
