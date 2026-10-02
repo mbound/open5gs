@@ -12,6 +12,22 @@ isolates the AMF-relocation procedure before adding SEPP/N32 routing.
 Baseline: `mbound/open5gs` commit
 `5877b43196fca0b185b266f6616979c86c962a4c`.
 
+## M1 implementation status
+
+The branch now contains the first end-to-end **single-PDU-session** implementation of the direct, same-PLMN inter-AMF preparation and execution path:
+
+- source AMF detects a non-local target gNB and discovers a target AMF by target TAI/PLMN;
+- source AMF sends `Namf_Communication_CreateUEContext` with UE/MM/session context and multipart N2 information;
+- KAMF, NH/NCC, NAS algorithm selection and NAS counters are transferred; the target AMF restores KNASint/KNASenc locally;
+- target AMF reconstructs the UE and PDU-session context, resolves the target gNB and invokes the existing SMF handover-preparation path;
+- target AMF sends NGAP `HandoverRequest` and accepts `HandoverRequestAcknowledge` without requiring a local source RAN UE;
+- target AMF performs the SMF `HANDOVER_REQ_ACK` update and completes the pending CreateUEContext request with HTTP 201 only after target-RAN preparation succeeds;
+- source AMF consumes `UeContextCreatedData` and drives its existing `HandoverCommand` path;
+- target-AMF `HandoverNotify` processing updates the SMF with `hoState=COMPLETED` without requiring a local source RAN UE;
+- the existing same-AMF N2 handover path remains the local-target fast path.
+
+M1 is deliberately constrained to one PDU session and direct AMF-to-AMF SBI. Failure/cancel coverage is not yet complete, and inter-PLMN SEPP/N32 routing remains M2. The branch includes SBI parsing coverage for CreateUEContext; repository CI has not yet executed on this fork, so build/integration validation is still required before treating the branch as merge-ready.
+
 ## Standards baseline
 
 The implementation is mapped against these procedures and APIs:
