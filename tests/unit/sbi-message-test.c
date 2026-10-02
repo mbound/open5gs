@@ -1368,7 +1368,8 @@ static void sbi_message_test15(abts_case *tc, void *data)
             "\"ngapIeType\":\"HANDOVER_REQUIRED\","
             "\"ngapData\":{\"contentId\":\"n2Info\"}"
         "},"
-        "\"pduSessionList\":[{\"pduSessionId\":1}]"
+        "\"pduSessionList\":[{\"pduSessionId\":1}],"
+        "\"n2NotifyUri\":\"http://127.0.0.10:7777/namf-comm/v1/ue-contexts/imsi-001010123456789/n2-info\""
         "}";
     ogs_sbi_request_t *request = NULL;
     ogs_sbi_message_t message;
@@ -1407,6 +1408,10 @@ static void sbi_message_test15(abts_case *tc, void *data)
                     message.UeContextCreateData->source_to_target_data);
             ABTS_PTR_NOTNULL(tc,
                     message.UeContextCreateData->pdu_session_list);
+            ABTS_STR_EQUAL(tc,
+                    "http://127.0.0.10:7777/namf-comm/v1/ue-contexts/"
+                    "imsi-001010123456789/n2-info",
+                    message.UeContextCreateData->n2_notify_uri);
             if (message.UeContextCreateData->pdu_session_list)
                 ABTS_INT_EQUAL(tc, 1,
                         message.UeContextCreateData->pdu_session_list->count);
