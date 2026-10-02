@@ -185,6 +185,9 @@ void ogs_sbi_message_free(ogs_sbi_message_t *message)
     if (message->SmContextStatusNotification)
         OpenAPI_sm_context_status_notification_free(
                 message->SmContextStatusNotification);
+    if (message->N2InformationNotification)
+        OpenAPI_n2_information_notification_free(
+                message->N2InformationNotification);
     if (message->PolicyAssociationRequest)
         OpenAPI_policy_association_request_free(
                 message->PolicyAssociationRequest);
@@ -1780,6 +1783,10 @@ static char *build_json(ogs_sbi_message_t *message)
         item = OpenAPI_termination_notification_convertToJSON(
                 message->TerminationNotification);
         ogs_assert(item);
+    } else if (message->N2InformationNotification) {
+        item = OpenAPI_n2_information_notification_convertToJSON(
+                message->N2InformationNotification);
+        ogs_assert(item);
     } else if (message->DeregistrationData) {
         item = OpenAPI_deregistration_data_convertToJSON(
                 message->DeregistrationData);
@@ -3145,6 +3152,19 @@ static int parse_json(ogs_sbi_message_t *message,
                         OpenAPI_sm_context_status_notification_parseFromJSON(
                                 item);
                     if (!message->SmContextStatusNotification) {
+                        rv = OGS_ERROR;
+                        ogs_error("JSON parse error");
+                    }
+                } else {
+                    ogs_error("HTTP ERROR Status : %d", message->res_status);
+                }
+                break;
+
+            CASE(OGS_SBI_RESOURCE_NAME_N2_INFO_NOTIFY)
+                if (message->res_status < 300) {
+                    message->N2InformationNotification =
+                        OpenAPI_n2_information_notification_parseFromJSON(item);
+                    if (!message->N2InformationNotification) {
                         rv = OGS_ERROR;
                         ogs_error("JSON parse error");
                     }
