@@ -132,6 +132,7 @@ extern "C" {
 #define OGS_SBI_RESOURCE_NAME_TRANSFER_UPDATE       "transfer-update"
 
 #define OGS_SBI_RESOURCE_NAME_SM_CONTEXT_STATUS     "sm-context-status"
+#define OGS_SBI_RESOURCE_NAME_N2_INFO_NOTIFY         "n2-info-notify"
 #define OGS_SBI_RESOURCE_NAME_AM_POLICY_NOTIFY      "am-policy-notify"
 #define OGS_SBI_RESOURCE_NAME_DEREG_NOTIFY          "dereg-notify"
 #define OGS_SBI_RESOURCE_NAME_SDMSUBSCRIPTION_NOTIFY \
@@ -594,6 +595,7 @@ typedef struct ogs_sbi_message_s {
     OpenAPI_n1_n2_msg_txfr_failure_notification_t
         *N1N2MsgTxfrFailureNotification;
     OpenAPI_sm_context_status_notification_t *SmContextStatusNotification;
+    OpenAPI_n2_information_notification_t *N2InformationNotification;
     OpenAPI_policy_association_request_t *PolicyAssociationRequest;
     OpenAPI_policy_association_t *PolicyAssociation;
     OpenAPI_policy_update_t *PolicyUpdate;
@@ -616,6 +618,8 @@ typedef struct ogs_sbi_message_s {
     OpenAPI_smf_registration_t *SmfRegistration;
     OpenAPI_sec_negotiate_req_data_t *SecNegotiateReqData;
     OpenAPI_sec_negotiate_rsp_data_t *SecNegotiateRspData;
+    OpenAPI_ue_context_create_data_t *UeContextCreateData;
+    OpenAPI_ue_context_created_data_t *UeContextCreatedData;
     OpenAPI_ue_context_transfer_req_data_t *UeContextTransferReqData;
     OpenAPI_ue_context_transfer_rsp_data_t *UeContextTransferRspData;
     OpenAPI_ue_reg_status_update_req_data_t *UeRegStatusUpdateReqData;
@@ -624,7 +628,13 @@ typedef struct ogs_sbi_message_s {
 
     ogs_sbi_links_t *links;
 
-#define OGS_SBI_MAX_NUM_OF_PART 8
+/*
+ * TS 29.518 CreateUEContext defines binaryDataN2Information plus
+ * binaryDataN2InformationExt1..Ext17, i.e. up to 18 binary body parts.
+ * Keep the generic SBI container large enough for the complete
+ * standards-defined Namf multipart body.
+ */
+#define OGS_SBI_MAX_NUM_OF_PART 18
     int num_of_part;
     ogs_sbi_part_t part[OGS_SBI_MAX_NUM_OF_PART];
 } ogs_sbi_message_t;

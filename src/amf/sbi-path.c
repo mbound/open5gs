@@ -159,6 +159,58 @@ int amf_ue_sbi_discover_and_send(
     return OGS_OK;
 }
 
+/*
+ * Handover preparation is an NGAP procedure, not a NAS registration
+ * procedure.  Keep its SBI failure handling out of the generic UE helper,
+ * which sends a GMM Reject when transaction creation or discovery fails.
+ */
+int amf_ue_sbi_discover_and_send_handover(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
+        amf_ue_t *amf_ue, int state, void *data)
+{
+    int rv;
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_assert(service_name);
+    ogs_assert(amf_ue);
+    ogs_assert(build);
+
+    /*
+     * A UE may already have used Namf_Communication against an old AMF
+     * (e.g. registration context transfer).  That per-UE cached service
+     * association must not override the target-TAI discovery for handover.
+     */
+    if (amf_ue->sbi.service_name_array[service_name].nf_instance_id) {
+        ogs_free(amf_ue->sbi.service_name_array[service_name].nf_instance_id);
+        amf_ue->sbi.service_name_array[service_name].nf_instance_id = NULL;
+#if ENABLE_VALIDITY_TIMEOUT
+        amf_ue->sbi.service_name_array[service_name].validity_timeout = 0;
+#endif
+    }
+
+    xact = ogs_sbi_xact_add(
+            amf_ue->id, &amf_ue->sbi, service_name, discovery_option,
+            (ogs_sbi_build_f)build, amf_ue, data);
+    if (!xact) {
+        ogs_error("[%s] Cannot create handover SBI transaction",
+                amf_ue->supi);
+        return OGS_ERROR;
+    }
+
+    xact->state = state;
+
+    rv = ogs_sbi_discover_and_send(xact);
+    if (rv != OGS_OK) {
+        ogs_error("[%s] Cannot send handover SBI request [error:%d]",
+                amf_ue->supi, rv);
+        ogs_sbi_xact_remove(xact);
+    }
+
+    return rv;
+}
+
 /* The UE FSM applies failure_action instead of the generic SBI reject. */
 int amf_ue_sbi_discover_and_send_eir(amf_ue_t *amf_ue)
 {
@@ -279,6 +331,69 @@ int amf_sess_sbi_discover_and_send(
 
     return OGS_OK;
 }
+int amf_sess_sbi_discover_and_send_handover(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
+        ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data)
+{
+    int rv;
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_assert(service_name);
+    ogs_assert(ran_ue);
+    ogs_assert(sess);
+    ogs_assert(build);
+
+    sess->ran_ue_id = ran_ue->id;
+
+    xact = ogs_sbi_xact_add(
+            sess->id, &sess->sbi, service_name, discovery_option,
+            (ogs_sbi_build_f)build, sess, data);
+    if (!xact) {
+        ogs_error("[%d] Cannot create handover session SBI transaction",
+                sess->psi);
+        return OGS_ERROR;
+    }
+
+    {
+        amf_sbi_xact_ctx_t *ctx = ogs_calloc(1, sizeof(*ctx));
+        ogs_assert(ctx);
+
+        ctx->ran_ue_id = ran_ue->id;
+        ctx->target_ue_id = ran_ue->target_ue_id;
+
+        xact->user_data = ctx;
+        xact->user_data_free = amf_sbi_xact_ctx_free;
+    }
+
+    xact->state = state;
+
+    /*
+     * Target-AMF handover preparation is subordinate to the inbound
+     * CreateUEContext request.  Associate the SMF transaction with that
+     * server stream so lib/sbi cancels it if the source AMF abandons the
+     * request before handover preparation completes.
+     */
+    {
+        amf_ue_t *amf_ue = amf_ue_find_by_id(sess->amf_ue_id);
+        if (amf_ue && amf_ue->handover.inter_amf_target &&
+            amf_ue->handover.create_ue_context_stream_id >= OGS_MIN_POOL_ID &&
+            amf_ue->handover.create_ue_context_stream_id <= OGS_MAX_POOL_ID)
+            xact->assoc_stream_id =
+                amf_ue->handover.create_ue_context_stream_id;
+    }
+
+    rv = ogs_sbi_discover_and_send(xact);
+    if (rv != OGS_OK) {
+        ogs_error("[%d] Cannot send handover session SBI request [error:%d]",
+                sess->psi, rv);
+        ogs_sbi_xact_remove(xact);
+    }
+
+    return rv;
+}
+
 static int client_discover_cb(
         int status, ogs_sbi_response_t *response, void *data)
 {

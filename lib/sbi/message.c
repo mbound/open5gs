@@ -185,6 +185,9 @@ void ogs_sbi_message_free(ogs_sbi_message_t *message)
     if (message->SmContextStatusNotification)
         OpenAPI_sm_context_status_notification_free(
                 message->SmContextStatusNotification);
+    if (message->N2InformationNotification)
+        OpenAPI_n2_information_notification_free(
+                message->N2InformationNotification);
     if (message->PolicyAssociationRequest)
         OpenAPI_policy_association_request_free(
                 message->PolicyAssociationRequest);
@@ -225,6 +228,10 @@ void ogs_sbi_message_free(ogs_sbi_message_t *message)
         OpenAPI_sec_negotiate_req_data_free(message->SecNegotiateReqData);
     if (message->SecNegotiateRspData)
         OpenAPI_sec_negotiate_rsp_data_free(message->SecNegotiateRspData);
+    if (message->UeContextCreateData)
+        OpenAPI_ue_context_create_data_free(message->UeContextCreateData);
+    if (message->UeContextCreatedData)
+        OpenAPI_ue_context_created_data_free(message->UeContextCreatedData);
     if (message->UeContextTransferReqData)
         OpenAPI_ue_context_transfer_req_data_free(message->UeContextTransferReqData);
     if (message->UeContextTransferRspData)
@@ -1776,6 +1783,10 @@ static char *build_json(ogs_sbi_message_t *message)
         item = OpenAPI_termination_notification_convertToJSON(
                 message->TerminationNotification);
         ogs_assert(item);
+    } else if (message->N2InformationNotification) {
+        item = OpenAPI_n2_information_notification_convertToJSON(
+                message->N2InformationNotification);
+        ogs_assert(item);
     } else if (message->DeregistrationData) {
         item = OpenAPI_deregistration_data_convertToJSON(
                 message->DeregistrationData);
@@ -1795,6 +1806,14 @@ static char *build_json(ogs_sbi_message_t *message)
     } else if (message->SecNegotiateRspData) {
         item = OpenAPI_sec_negotiate_rsp_data_convertToJSON(
             message->SecNegotiateRspData);
+        ogs_assert(item);
+    } else if (message->UeContextCreateData) {
+        item = OpenAPI_ue_context_create_data_convertToJSON(
+                message->UeContextCreateData);
+        ogs_assert(item);
+    } else if (message->UeContextCreatedData) {
+        item = OpenAPI_ue_context_created_data_convertToJSON(
+                message->UeContextCreatedData);
         ogs_assert(item);
     } else if (message->UeContextTransferReqData) {
         item = OpenAPI_ue_context_transfer_req_data_convertToJSON(
@@ -2746,6 +2765,37 @@ static int parse_json(ogs_sbi_message_t *message,
         case OpenAPI_service_name_namf_comm:
             SWITCH(message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
+                /*
+                 * TS 29.518 Individual UE Context resource:
+                 *   PUT /ue-contexts/{ueContextId}
+                 *
+                 * Sub-resources such as /transfer and /transfer-update are
+                 * handled below.  Do not pass a NULL component[2] through
+                 * SWITCH(), because the bare resource is a valid endpoint.
+                 */
+                if (!message->h.resource.component[2]) {
+                    if (message->res_status == 0) {
+                        message->UeContextCreateData =
+                            OpenAPI_ue_context_create_data_parseFromJSON(item);
+                        if (!message->UeContextCreateData) {
+                            rv = OGS_ERROR;
+                            ogs_error("JSON parse error");
+                        }
+                    } else if (message->res_status ==
+                                OGS_SBI_HTTP_STATUS_CREATED) {
+                        message->UeContextCreatedData =
+                            OpenAPI_ue_context_created_data_parseFromJSON(item);
+                        if (!message->UeContextCreatedData) {
+                            rv = OGS_ERROR;
+                            ogs_error("JSON parse error");
+                        }
+                    } else {
+                        ogs_error("HTTP ERROR Status : %d",
+                                message->res_status);
+                    }
+                    break;
+                }
+
                 SWITCH(message->h.resource.component[2])
                 CASE(OGS_SBI_RESOURCE_NAME_N1_N2_MESSAGES)
                     if (message->res_status == 0) {
@@ -3102,6 +3152,19 @@ static int parse_json(ogs_sbi_message_t *message,
                         OpenAPI_sm_context_status_notification_parseFromJSON(
                                 item);
                     if (!message->SmContextStatusNotification) {
+                        rv = OGS_ERROR;
+                        ogs_error("JSON parse error");
+                    }
+                } else {
+                    ogs_error("HTTP ERROR Status : %d", message->res_status);
+                }
+                break;
+
+            CASE(OGS_SBI_RESOURCE_NAME_N2_INFO_NOTIFY)
+                if (message->res_status < 300) {
+                    message->N2InformationNotification =
+                        OpenAPI_n2_information_notification_parseFromJSON(item);
+                    if (!message->N2InformationNotification) {
                         rv = OGS_ERROR;
                         ogs_error("JSON parse error");
                     }

@@ -20,6 +20,7 @@
 #include "nsmf-handler.h"
 #include "nas-path.h"
 #include "ngap-path.h"
+#include "namf-handler.h"
 #include "sbi-path.h"
 
 #include "gmm-build.h"
@@ -394,13 +395,17 @@ int amf_nsmf_pdusession_handle_update_sm_context(
                         AMF_UE_CLEAR_N2_TRANSFER(
                                 amf_ue, pdu_session_resource_setup_request);
                     }
-                } else if (state == AMF_UPDATE_SM_CONTEXT_HANDOVER_REQUIRED) {
+                } else if (state == AMF_UPDATE_SM_CONTEXT_HANDOVER_REQUIRED ||
+                           state == AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQUIRED) {
                     AMF_SESS_STORE_N2_TRANSFER(
                             sess, handover_request, ogs_pkbuf_copy(n2smbuf));
 
-                    if (AMF_SESSION_SYNC_DONE(amf_ue,
-                                AMF_UPDATE_SM_CONTEXT_HANDOVER_REQUIRED)) {
-                        r = ngap_send_handover_request(amf_ue);
+                    if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
+                        if (state ==
+                                AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQUIRED)
+                            r = ngap_send_handover_request_to_target(amf_ue);
+                        else
+                            r = ngap_send_handover_request(amf_ue);
                         ogs_expect(r == OGS_OK);
                         ogs_assert(r != OGS_ERROR);
 
@@ -553,7 +558,13 @@ int amf_nsmf_pdusession_handle_update_sm_context(
                         sess, handover_command, ogs_pkbuf_copy(n2smbuf));
 
                 if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
-                    r = ngap_send_handover_command(amf_ue);
+                    if (state ==
+                            AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQ_ACK) {
+                        r = amf_namf_comm_send_create_ue_context_response(
+                                amf_ue);
+                    } else {
+                        r = ngap_send_handover_command(amf_ue);
+                    }
                     ogs_expect(r == OGS_OK);
                     ogs_assert(r != OGS_ERROR);
 
