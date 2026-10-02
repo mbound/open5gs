@@ -133,6 +133,8 @@ int amf_namf_comm_handle_create_ue_context_request(
     ogs_assert(stream);
     ogs_assert(recvmsg);
 
+    memset(&param, 0, sizeof(param));
+
     CreateData = recvmsg->UeContextCreateData;
     if (!CreateData) {
         ogs_error("No UeContextCreateData");
@@ -249,11 +251,6 @@ int amf_namf_comm_handle_create_ue_context_request(
                 ue_context_id, target_gnb_id);
         return OGS_ERROR;
     }
-    if (memcmp(&target_gnb->plmn_id,
-            &CreateData->target_id->ran_node_id->plmn_id,
-            0) != 0) {
-        /* PLMN is validated below through the served target TAI. */
-    }
     if (amf_find_served_tai(&target_tai) < 0) {
         ogs_error("[%s] Target TAI is not served by this AMF "
                 "[PLMN:%06x TAC:%d]", ue_context_id,
@@ -289,7 +286,6 @@ int amf_namf_comm_handle_create_ue_context_request(
         goto cleanup;
 
     if (!SECURITY_CONTEXT_IS_VALID(amf_ue) ||
-        !amf_ue->nhcc ||
         !amf_ue->allowed_nssai.num_of_s_nssai) {
         ogs_error("[%s] Transferred handover context is incomplete",
                 ue_context_id);
@@ -320,7 +316,6 @@ int amf_namf_comm_handle_create_ue_context_request(
             source_to_target->data, source_to_target->len,
             &amf_ue->handover.container);
 
-    memset(&param, 0, sizeof(param));
     param.n2smbuf = ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
     if (!param.n2smbuf)
         goto cleanup;
