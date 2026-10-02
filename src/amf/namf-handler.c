@@ -1646,6 +1646,16 @@ static int amf_namf_comm_decode_ue_context(
             amf_ue_save_to_release_session_list(amf_ue);
     }
 
+    if (UeContext->seaf_data &&
+        UeContext->seaf_data->key_amf &&
+        UeContext->seaf_data->key_amf->key_val &&
+        UeContext->mm_context_list) {
+        amf_ue->nas.amf.tsc = amf_ue->nas.ue.tsc;
+        amf_ue->nas.amf.ksi = amf_ue->nas.ue.ksi;
+        amf_ue->security_context_available = 1;
+        amf_ue->mac_failed = 0;
+    }
+
     /* TODO ueRadioCapability */
 
     return OGS_OK;
