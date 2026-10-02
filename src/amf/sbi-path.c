@@ -159,6 +159,45 @@ int amf_ue_sbi_discover_and_send(
     return OGS_OK;
 }
 
+/*
+ * Handover preparation is an NGAP procedure, not a NAS registration
+ * procedure.  Keep its SBI failure handling out of the generic UE helper,
+ * which sends a GMM Reject when transaction creation or discovery fails.
+ */
+int amf_ue_sbi_discover_and_send_handover(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
+        amf_ue_t *amf_ue, int state, void *data)
+{
+    int rv;
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_assert(service_name);
+    ogs_assert(amf_ue);
+    ogs_assert(build);
+
+    xact = ogs_sbi_xact_add(
+            amf_ue->id, &amf_ue->sbi, service_name, discovery_option,
+            (ogs_sbi_build_f)build, amf_ue, data);
+    if (!xact) {
+        ogs_error("[%s] Cannot create handover SBI transaction",
+                amf_ue->supi);
+        return OGS_ERROR;
+    }
+
+    xact->state = state;
+
+    rv = ogs_sbi_discover_and_send(xact);
+    if (rv != OGS_OK) {
+        ogs_error("[%s] Cannot send handover SBI request [error:%d]",
+                amf_ue->supi, rv);
+        ogs_sbi_xact_remove(xact);
+    }
+
+    return rv;
+}
+
 /* The UE FSM applies failure_action instead of the generic SBI reject. */
 int amf_ue_sbi_discover_and_send_eir(amf_ue_t *amf_ue)
 {
