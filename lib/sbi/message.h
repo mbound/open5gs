@@ -626,7 +626,13 @@ typedef struct ogs_sbi_message_s {
 
     ogs_sbi_links_t *links;
 
-#define OGS_SBI_MAX_NUM_OF_PART 8
+/*
+ * TS 29.518 CreateUEContext defines binaryDataN2Information plus
+ * binaryDataN2InformationExt1..Ext17, i.e. up to 18 binary body parts.
+ * Keep the generic SBI container large enough for the complete
+ * standards-defined Namf multipart body.
+ */
+#define OGS_SBI_MAX_NUM_OF_PART 18
     int num_of_part;
     ogs_sbi_part_t part[OGS_SBI_MAX_NUM_OF_PART];
 } ogs_sbi_message_t;
