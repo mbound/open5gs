@@ -1813,6 +1813,7 @@ amf_ue_t *amf_ue_add(ran_ue_t *ran_ue)
     amf_ue->nr_cgi_gnb_id_length = ran_ue->saved.nr_cgi_gnb_id_length;
 
     amf_ue->guami = &amf_self()->served_guami[0];
+    amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
     amf_ue->nas.access_type = OGS_ACCESS_TYPE_3GPP;
     amf_ue->nas.amf.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
     amf_ue->abba_len = 2;
@@ -1910,6 +1911,8 @@ void amf_ue_remove(amf_ue_t *amf_ue)
 
     /* Clear Transparent Container */
     OGS_ASN_CLEAR_DATA(&amf_ue->handover.container);
+    if (amf_ue->handover.n2_notify_uri)
+        ogs_free(amf_ue->handover.n2_notify_uri);
 
     /* Delete All Timers */
     CLEAR_AMF_UE_ALL_TIMERS(amf_ue);
