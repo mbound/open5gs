@@ -373,6 +373,18 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_update_sm_context(
             ogs_error("No target_id");
             goto end;
         }
+    } else if (param->targetId) {
+        /*
+         * Target-AMF CreateUEContext already carries the TS 29.518
+         * NgRanTargetId representation.  Reuse it when updating the SMF
+         * instead of needlessly round-tripping through NGAP ASN.1.
+         */
+        SmContextUpdateData.target_id =
+            OpenAPI_ng_ran_target_id_copy(NULL, param->targetId);
+        if (!SmContextUpdateData.target_id) {
+            ogs_error("Cannot copy target_id");
+            goto end;
+        }
     }
 
     if (param->ngApCause.group) {
@@ -424,7 +436,7 @@ end:
     if (SmContextUpdateData.ue_time_zone)
         ogs_free(SmContextUpdateData.ue_time_zone);
     if (SmContextUpdateData.target_id)
-        amf_nsmf_pdusession_free_target_id(SmContextUpdateData.target_id);
+        OpenAPI_ng_ran_target_id_free(SmContextUpdateData.target_id);
 
     return request;
 }
