@@ -567,6 +567,8 @@ ogs_sbi_nf_info_t *ogs_sbi_nf_info_find(
 
 bool ogs_sbi_check_amf_info_guami(
         ogs_sbi_amf_info_t *amf_info, ogs_guami_t *guami);
+bool ogs_sbi_check_amf_info_tai(
+        ogs_sbi_amf_info_t *amf_info, ogs_5gs_tai_t *tai);
 bool ogs_sbi_check_smf_info_slice(
         ogs_sbi_smf_info_t *smf_info, ogs_s_nssai_t *s_nssai, char *dnn);
 bool ogs_sbi_check_smf_info_tai(
