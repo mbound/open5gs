@@ -815,6 +815,14 @@ int amf_nsmf_pdusession_handle_update_sm_context(
                 /* Not reached here */
                 ogs_assert_if_reached();
 
+            } else if (state ==
+                    AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_CANCEL) {
+
+                if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
+                    r = amf_namf_comm_complete_release_ue_context(amf_ue);
+                    ogs_expect(r == OGS_OK);
+                }
+
             } else if (state == AMF_UPDATE_SM_CONTEXT_HANDOVER_CANCEL) {
 
                 if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
