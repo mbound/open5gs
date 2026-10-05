@@ -730,9 +730,12 @@ struct amf_ue_s {
          * retain the inbound CreateUEContext stream until target-RAN and
          * SMF handover preparation have completed asynchronously.
          */
+        bool inter_amf_source;
         bool inter_amf_target;
         ogs_pool_id_t create_ue_context_stream_id;
+        ogs_pool_id_t release_ue_context_stream_id;
         char *n2_notify_uri;
+        char *target_ue_context_uri;
     } handover;
 
     /* SubscriptionId of Subscription to Data Change Notification to UDM */
