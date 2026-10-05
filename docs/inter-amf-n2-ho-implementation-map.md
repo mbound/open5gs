@@ -13,10 +13,21 @@ Initial implementation target (M1):
 - Same PLMN first, direct SBI between AMFs.
 - Connected-mode N2 handover with AMF relocation.
 - One PDU session / one S-NSSAI initially.
-- Reuse the existing SMF/PSA where topology permits.
-- Add the inter-PLMN SEPP/N32 path only after the direct inter-AMF procedure works.
+- Both AMFs may share one SMF/UPF only for this procedure-isolation harness.
+- gNB IDs must be unique across the two AMFs.
 
-The normative procedure to map is TS 23.502 §4.9.1.3.2 (N2-based handover with AMF relocation), with Namf_Communication operation semantics from TS 29.518.
+The production/lab target for **inter-PLMN TN-NTN handover is home-routed
+roaming**, not the M1 shared-SMF/UPF topology. The home H-SMF/H-UPF remains the
+PDU Session anchor, the visited side uses V-SMF/V-UPF and N9 toward the home
+anchor, and inter-PLMN SBA signalling traverses SEPPs over N32.
+
+The normative procedure set is therefore:
+- TS 23.502 §4.9.1.3 for N2 handover/AMF relocation;
+- TS 23.502 §4.23 for inter-PLMN/HR handover impacts and intermediate SMF/UPF
+  insertion/change/removal;
+- TS 29.518 for Namf_Communication;
+- TS 23.501 home-routed roaming architecture for V-SMF/V-UPF, H-SMF/H-UPF,
+  N9 and N32/SEPP.
 
 ## Current Open5GS baseline findings
 
@@ -77,6 +88,32 @@ This is useful: M1 does not need a new Namf server route. The missing work start
 
 This provides reusable patterns for AMF discovery, SBI transaction ownership, AMF UE context serialization, and old/new-AMF lifecycle handling.
 
+## Current blockers found by code survey
+
+The success path is substantially implemented, but five items block the
+intended TN-NTN tests:
+
+1. **TAI-aware target-AMF selection** — the source supplies target TAI/PLMN in
+   discovery, but the NRF selection path does not reliably distinguish AMFs
+   by served TAI. Add NRF TAI matching or a deterministic lab override.
+
+2. **Handover-complete notification to the source AMF** — the branch already
+   contains `amf_namf_callback_build_n2_info_notify()` with
+   `HANDOVER_COMPLETED`, but nothing invokes it from the target
+   `HandoverNotify` completion path. Without it, the old source-side context
+   is not released.
+
+3. **Cancel/failure N14 rollback** — Handover Cancel and target preparation
+   failure still need inter-AMF state rollback and peer notification instead
+   of terminating locally with Error Indication.
+
+4. **NTN location IEs** — ordinary NR-CGI/TAI are handled, but NR NTN TAI
+   Information and Mapped Cell ID are not yet retained/propagated for TN-NTN
+   mobility testing.
+
+5. **Build/integration validation** — no CI run and no reproducible two-AMF
+   configuration/test exist yet.
+
 ## M1 missing pieces
 
 ### Source AMF
@@ -128,14 +165,19 @@ The target-AMF CreateUEContext handler must not return success when it merely ac
 
 ## Planned increments
 
-- **M1-A**: implementation map and exact 3GPP field/procedure mapping.
-- **M1-B**: source-AMF inter-AMF split + CreateUEContext request builder/client.
-- **M1-C**: target-AMF context reconstruction + target NGAP HandoverRequest.
-- **M1-D**: correlate HandoverRequestAcknowledge to the pending Namf transaction and complete CreateUEContext.
-- **M1-E**: HandoverNotify, SMF update, source release, cancel/failure cleanup.
-- **M2**: separate PLMN IDs, still direct AMF-to-AMF SBI for isolation.
-- **M3**: route the same procedure through SCP/SEPP/N32.
-- **M4+**: standards-complete target AMF selection, inter-PLMN S-NSSAI mapping, and additional relocation variants.
+- **M1**: same-PLMN/direct AMF-to-AMF success path, one PDU session.
+- **M2-A**: make target-AMF selection deterministic and TAI-aware.
+- **M2-B**: invoke Namf callback `HANDOVER_COMPLETED`, release source
+  AMF/RAN state, and complete execution-phase lifecycle.
+- **M2-C**: implement inter-AMF Handover Cancel / HandoverFailure rollback.
+- **M2-D**: preserve NTN-specific location IEs required by the TN-NTN test.
+- **M2-E**: add two-AMF/two-gNB configuration and integration test; run CI.
+- **M3**: inter-PLMN **home-routed** topology with H-SMF/H-UPF anchor,
+  V-SMF/V-UPF, N9, and vSEPP↔hSEPP over N32. Keep N14 as the AMF-relocation
+  control-plane procedure within this architecture.
+- **M4+**: multi-session partial success, forwarding variants, I-SMF/I-UPF
+  relocation variants, full inter-PLMN S-NSSAI mapping, policy relocation and
+  additional roaming cases.
 
 ## Immediate next code-reading targets
 
