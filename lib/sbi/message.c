@@ -232,6 +232,8 @@ void ogs_sbi_message_free(ogs_sbi_message_t *message)
         OpenAPI_ue_context_create_data_free(message->UeContextCreateData);
     if (message->UeContextCreatedData)
         OpenAPI_ue_context_created_data_free(message->UeContextCreatedData);
+    if (message->UeContextCreateError)
+        OpenAPI_ue_context_create_error_free(message->UeContextCreateError);
     if (message->UeContextRelease)
         OpenAPI_ue_context_release_free(message->UeContextRelease);
     if (message->UeContextTransferReqData)
@@ -1817,6 +1819,10 @@ static char *build_json(ogs_sbi_message_t *message)
         item = OpenAPI_ue_context_created_data_convertToJSON(
                 message->UeContextCreatedData);
         ogs_assert(item);
+    } else if (message->UeContextCreateError) {
+        item = OpenAPI_ue_context_create_error_convertToJSON(
+                message->UeContextCreateError);
+        ogs_assert(item);
     } else if (message->UeContextRelease) {
         item = OpenAPI_ue_context_release_convertToJSON(
                 message->UeContextRelease);
@@ -2792,6 +2798,18 @@ static int parse_json(ogs_sbi_message_t *message,
                         message->UeContextCreatedData =
                             OpenAPI_ue_context_created_data_parseFromJSON(item);
                         if (!message->UeContextCreatedData) {
+                            rv = OGS_ERROR;
+                            ogs_error("JSON parse error");
+                        }
+                    } else if (message->res_status ==
+                                    OGS_SBI_HTTP_STATUS_BAD_REQUEST ||
+                               message->res_status ==
+                                    OGS_SBI_HTTP_STATUS_FORBIDDEN ||
+                               message->res_status ==
+                                    OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR) {
+                        message->UeContextCreateError =
+                            OpenAPI_ue_context_create_error_parseFromJSON(item);
+                        if (!message->UeContextCreateError) {
                             rv = OGS_ERROR;
                             ogs_error("JSON parse error");
                         }
