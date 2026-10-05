@@ -88,6 +88,7 @@ bool amf_sbi_send_request(
 #define AMF_CREATE_UE_CONTEXT_HANDOVER_REQUIRED         61
 #define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQUIRED 62
 #define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQ_ACK  63
+#define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_CANCEL   64
 
 /*
  * TS23.502
@@ -144,6 +145,8 @@ void amf_sbi_send_release_all_sessions(
 bool amf_sbi_send_n1_n2_failure_notify(
         amf_sess_t *sess, OpenAPI_n1_n2_message_transfer_cause_e cause);
 bool amf_sbi_send_inter_amf_handover_complete(amf_ue_t *amf_ue);
+bool amf_sbi_send_inter_amf_handover_cancel(
+        amf_ue_t *amf_ue, NGAP_Cause_t *cause);
 
 bool amf_ue_have_session_release_pending(amf_ue_t *amf_ue);
 bool amf_sess_have_session_release_pending(amf_sess_t *sess);
