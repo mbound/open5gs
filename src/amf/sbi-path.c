@@ -1116,6 +1116,140 @@ static int client_inter_amf_handover_complete_cb(
     return rv;
 }
 
+static int client_inter_amf_handover_cancel_cb(
+        int status, ogs_sbi_response_t *response, void *data)
+{
+    int rv;
+    ogs_pool_id_t amf_ue_id = OGS_POINTER_TO_UINT(data);
+    amf_ue_t *amf_ue = NULL;
+    ran_ue_t *source_ue = NULL;
+    ogs_sbi_message_t message;
+
+    if (status != OGS_OK) {
+        ogs_log_message(
+                status == OGS_DONE ? OGS_LOG_DEBUG : OGS_LOG_WARN, 0,
+                "ReleaseUEContext failed [%d]", status);
+        if (response)
+            ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    ogs_assert(response);
+    memset(&message, 0, sizeof(message));
+    rv = ogs_sbi_parse_response(&message, response);
+    if (rv != OGS_OK) {
+        ogs_error("Cannot parse ReleaseUEContext response");
+        ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    amf_ue = amf_ue_find_by_id(amf_ue_id);
+    if (!amf_ue) {
+        ogs_warn("Source AMF UE context removed before ReleaseUEContext "
+                "response");
+        ogs_sbi_message_free(&message);
+        ogs_sbi_response_free(response);
+        return OGS_NOTFOUND;
+    }
+
+    if (message.res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT) {
+        ogs_error("[%s] ReleaseUEContext failed [HTTP:%d]",
+                amf_ue->supi, message.res_status);
+        ogs_sbi_message_free(&message);
+        ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    source_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (!source_ue) {
+        ogs_error("[%s] Source NG context removed before handover cancel ack",
+                amf_ue->supi);
+        ogs_sbi_message_free(&message);
+        ogs_sbi_response_free(response);
+        return OGS_NOTFOUND;
+    }
+
+    rv = ngap_send_handover_cancel_ack(source_ue);
+    if (rv != OGS_OK)
+        ogs_error("[%s] Cannot send HandoverCancelAcknowledge [error:%d]",
+                amf_ue->supi, rv);
+
+    amf_ue->handover.inter_amf_source = false;
+    if (amf_ue->handover.target_ue_context_uri) {
+        ogs_free(amf_ue->handover.target_ue_context_uri);
+        amf_ue->handover.target_ue_context_uri = NULL;
+    }
+    OGS_ASN_CLEAR_DATA(&amf_ue->handover.container);
+    AMF_UE_CLEAR_N2_TRANSFER(amf_ue, handover_command);
+
+    ogs_sbi_message_free(&message);
+    ogs_sbi_response_free(response);
+    return rv;
+}
+
+bool amf_sbi_send_inter_amf_handover_cancel(
+        amf_ue_t *amf_ue, NGAP_Cause_t *cause)
+{
+    bool rc = false;
+    ogs_sbi_request_t *request = NULL;
+    ogs_sbi_client_t *client = NULL;
+    OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
+    char *fqdn = NULL;
+    uint16_t port = 0;
+    ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_source);
+    ogs_assert(cause);
+
+    if (!amf_ue->handover.target_ue_context_uri) {
+        ogs_error("[%s] No target UE context URI for handover cancel",
+                amf_ue->supi);
+        return false;
+    }
+
+    if (ogs_sbi_getaddr_from_uri(
+            &scheme, &fqdn, &port, &addr, &addr6,
+            amf_ue->handover.target_ue_context_uri) == false ||
+        scheme == OpenAPI_uri_scheme_NULL) {
+        ogs_error("[%s] Invalid target UE context URI [%s]",
+                amf_ue->supi,
+                amf_ue->handover.target_ue_context_uri);
+        goto cleanup;
+    }
+
+    client = ogs_sbi_client_find(scheme, fqdn, port, addr, addr6);
+    if (!client)
+        client = ogs_sbi_client_add(scheme, fqdn, port, addr, addr6);
+    if (!client) {
+        ogs_error("[%s] Cannot create target AMF SBI client", amf_ue->supi);
+        goto cleanup;
+    }
+
+    request = amf_namf_comm_build_release_ue_context(amf_ue, cause);
+    if (!request) {
+        ogs_error("[%s] Cannot build ReleaseUEContext request", amf_ue->supi);
+        goto cleanup;
+    }
+
+    rc = ogs_sbi_send_request_to_client(
+            client, client_inter_amf_handover_cancel_cb, request,
+            OGS_UINT_TO_POINTER(amf_ue->id));
+    if (rc != true)
+        ogs_error("[%s] Cannot send ReleaseUEContext", amf_ue->supi);
+
+cleanup:
+    if (request)
+        ogs_sbi_request_free(request);
+    if (fqdn)
+        ogs_free(fqdn);
+    if (addr)
+        ogs_freeaddrinfo(addr);
+    if (addr6)
+        ogs_freeaddrinfo(addr6);
+    return rc;
+}
+
 bool amf_sbi_send_inter_amf_handover_complete(amf_ue_t *amf_ue)
 {
     bool rc = false;
