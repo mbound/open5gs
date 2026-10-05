@@ -115,6 +115,22 @@ static void ngap_store_nr_ntn_tai_information(
     }
 }
 
+static int ngap_sess_sbi_discover_and_send(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
+        ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data)
+{
+    if (state == AMF_UPDATE_SM_CONTEXT_HANDOVER_NOTIFY && data) {
+        amf_nsmf_pdusession_sm_context_param_t *param = data;
+        param->ue_location = true;
+    }
+
+    return (amf_sess_sbi_discover_and_send)(
+            service_name, discovery_option, build,
+            ran_ue, sess, state, data);
+}
+
 /*
  * ngap-handler-body.inc has exactly four NR-CGI decode sites and each has
  * the local UserLocationInformationNR variable. Interpose only in this
@@ -128,6 +144,10 @@ static void ngap_store_nr_ntn_tai_information(
                 UserLocationInformationNR, (__dst)); \
     } while (0)
 
+#define amf_sess_sbi_discover_and_send(...) \
+    ngap_sess_sbi_discover_and_send(__VA_ARGS__)
+
 #include "ngap-handler-body.inc"
 
+#undef amf_sess_sbi_discover_and_send
 #undef ogs_ngap_ASN_to_nr_cgi
