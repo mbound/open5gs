@@ -364,6 +364,8 @@ int amf_namf_comm_send_create_ue_context_response(amf_ue_t *amf_ue)
 {
     int i, rv = OGS_ERROR;
     ogs_sbi_stream_t *stream = NULL;
+    ogs_sbi_server_t *server = NULL;
+    ogs_sbi_header_t header;
     ogs_sbi_message_t sendmsg;
     ogs_sbi_response_t *response = NULL;
     OpenAPI_ue_context_created_data_t CreatedData;
@@ -490,6 +492,26 @@ int amf_namf_comm_send_create_ue_context_response(amf_ue_t *amf_ue)
     CreatedData.pdu_session_list = PduSessionList;
     sendmsg.UeContextCreatedData = &CreatedData;
 
+    /*
+     * TS 29.518 CreateUEContext returns the URI of the target AMF UE
+     * context. The source retains it for ReleaseUEContext on HandoverCancel.
+     */
+    server = ogs_sbi_server_from_stream(stream);
+    ogs_assert(server);
+    memset(&header, 0, sizeof(header));
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_namf_comm);
+    header.api.version = (char *)OGS_SBI_API_V1;
+    header.resource.component[0] =
+        (char *)OGS_SBI_RESOURCE_NAME_UE_CONTEXTS;
+    header.resource.component[1] = amf_ue->supi;
+    sendmsg.http.location = ogs_sbi_server_uri(server, &header);
+    if (!sendmsg.http.location) {
+        ogs_error("[%s] Cannot build target UE context Location",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
     response = ogs_sbi_build_response(
             &sendmsg, OGS_SBI_HTTP_STATUS_CREATED);
     if (!response) {
@@ -515,6 +537,9 @@ cleanup:
             sendmsg.part[i].pkbuf = NULL;
         }
     }
+
+    if (sendmsg.http.location)
+        ogs_free(sendmsg.http.location);
 
     if (PduSessionList) {
         OpenAPI_list_for_each(PduSessionList, node) {
@@ -556,6 +581,17 @@ int amf_namf_comm_handle_create_ue_context_response(
                 amf_ue->supi, recvmsg->res_status);
         goto preparation_failure;
     }
+
+    if (!recvmsg->http.location) {
+        ogs_error("[%s] CreateUEContext response has no Location",
+                amf_ue->supi);
+        goto preparation_failure;
+    }
+    if (amf_ue->handover.target_ue_context_uri)
+        ogs_free(amf_ue->handover.target_ue_context_uri);
+    amf_ue->handover.target_ue_context_uri =
+        ogs_strdup(recvmsg->http.location);
+    ogs_assert(amf_ue->handover.target_ue_context_uri);
 
     created = recvmsg->UeContextCreatedData;
     if (!created || !created->ue_context ||
