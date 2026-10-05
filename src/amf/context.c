@@ -1811,6 +1811,8 @@ amf_ue_t *amf_ue_add(ran_ue_t *ran_ue)
     memcpy(&amf_ue->nr_tai, &ran_ue->saved.nr_tai, sizeof(ogs_5gs_tai_t));
     memcpy(&amf_ue->nr_cgi, &ran_ue->saved.nr_cgi, sizeof(ogs_nr_cgi_t));
     amf_ue->nr_cgi_gnb_id_length = ran_ue->saved.nr_cgi_gnb_id_length;
+    memcpy(&amf_ue->nr_ntn_tai, &ran_ue->saved.nr_ntn_tai,
+            sizeof(amf_ue->nr_ntn_tai));
 
     amf_ue->guami = &amf_self()->served_guami[0];
     amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
