@@ -1824,6 +1824,48 @@ bool ogs_sbi_check_amf_info_guami(
     return false;
 }
 
+bool ogs_sbi_check_amf_info_tai(
+        ogs_sbi_amf_info_t *amf_info, ogs_5gs_tai_t *tai)
+{
+    int i, j;
+
+    ogs_assert(amf_info);
+    ogs_assert(tai);
+
+    /*
+     * An AMF that did not advertise TAI information remains eligible.
+     * When taiList/taiRangeList is present, however, the discovery TAI
+     * must be served by that AMF.
+     */
+    if (amf_info->num_of_nr_tai == 0 &&
+        amf_info->num_of_nr_tai_range == 0)
+        return true;
+
+    for (i = 0; i < amf_info->num_of_nr_tai; i++) {
+        if (memcmp(&tai->plmn_id,
+                &amf_info->nr_tai[i].plmn_id, OGS_PLMN_ID_LEN) == 0 &&
+            tai->tac.v == amf_info->nr_tai[i].tac.v)
+            return true;
+    }
+
+    for (i = 0; i < amf_info->num_of_nr_tai_range; i++) {
+        if (memcmp(&tai->plmn_id,
+                &amf_info->nr_tai_range[i].plmn_id,
+                OGS_PLMN_ID_LEN) != 0)
+            continue;
+
+        for (j = 0;
+             j < amf_info->nr_tai_range[i].num_of_tac_range;
+             j++) {
+            if (tai->tac.v >= amf_info->nr_tai_range[i].start[j].v &&
+                tai->tac.v <= amf_info->nr_tai_range[i].end[j].v)
+                return true;
+        }
+    }
+
+    return false;
+}
+
 bool ogs_sbi_check_smf_info_slice(
         ogs_sbi_smf_info_t *smf_info, ogs_s_nssai_t *s_nssai, char *dnn)
 {
@@ -2253,6 +2295,17 @@ bool ogs_sbi_discovery_option_is_matched(
                 ogs_sbi_check_amf_info_guami(
                     &nf_info->amf,
                     &discovery_option->guami) == false)
+                return false;
+
+            /*
+             * TS 29.510 NF discovery 'tai' filter.  AMF NF profiles
+             * already retain taiList/taiRangeList, so use them to select
+             * the AMF actually serving the requested target TAI.
+             */
+            if (discovery_option->tai_presence &&
+                ogs_sbi_check_amf_info_tai(
+                    &nf_info->amf,
+                    &discovery_option->tai) == false)
                 return false;
         }
 
