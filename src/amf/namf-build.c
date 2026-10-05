@@ -613,6 +613,44 @@ cleanup:
     return request;
 }
 
+ogs_sbi_request_t *amf_namf_comm_build_release_ue_context(
+        amf_ue_t *amf_ue, void *data)
+{
+    NGAP_Cause_t *cause = data;
+    ogs_sbi_message_t message;
+    ogs_sbi_request_t *request = NULL;
+    OpenAPI_ue_context_release_t release;
+    OpenAPI_ng_ap_cause_t ngap_cause;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->supi);
+    ogs_assert(amf_ue->handover.target_ue_context_uri);
+
+    memset(&message, 0, sizeof(message));
+    memset(&release, 0, sizeof(release));
+    memset(&ngap_cause, 0, sizeof(ngap_cause));
+
+    message.h.method = (char *)OGS_SBI_HTTP_METHOD_POST;
+    message.h.uri = ogs_msprintf("%s/%s",
+            amf_ue->handover.target_ue_context_uri,
+            OGS_SBI_RESOURCE_NAME_RELEASE);
+    ogs_assert(message.h.uri);
+
+    release.supi = amf_ue->supi;
+    if (cause) {
+        ngap_cause.group = cause->present;
+        ngap_cause.value = (int)cause->choice.radioNetwork;
+        release.ngap_cause = &ngap_cause;
+    }
+    message.UeContextRelease = &release;
+
+    request = ogs_sbi_build_request(&message);
+    ogs_expect(request);
+
+    ogs_free(message.h.uri);
+    return request;
+}
+
 ogs_sbi_request_t *amf_namf_callback_build_n2_info_notify(
         amf_ue_t *amf_ue, void *data)
 {
