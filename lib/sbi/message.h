@@ -620,6 +620,7 @@ typedef struct ogs_sbi_message_s {
     OpenAPI_sec_negotiate_rsp_data_t *SecNegotiateRspData;
     OpenAPI_ue_context_create_data_t *UeContextCreateData;
     OpenAPI_ue_context_created_data_t *UeContextCreatedData;
+    OpenAPI_ue_context_create_error_t *UeContextCreateError;
     OpenAPI_ue_context_release_t *UeContextRelease;
     OpenAPI_ue_context_transfer_req_data_t *UeContextTransferReqData;
     OpenAPI_ue_context_transfer_rsp_data_t *UeContextTransferRspData;
