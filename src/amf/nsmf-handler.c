@@ -823,6 +823,25 @@ int amf_nsmf_pdusession_handle_update_sm_context(
                     ogs_expect(r == OGS_OK);
                 }
 
+            } else if (state ==
+                    AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_FAILURE) {
+
+                if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
+                    ran_ue_t *target_ue =
+                        ran_ue_find_by_id(amf_ue->ran_ue_id);
+
+                    if (target_ue) {
+                        r = ngap_send_ran_ue_context_release_command(
+                                target_ue,
+                                NGAP_Cause_PR_radioNetwork,
+                                NGAP_CauseRadioNetwork_ho_failure_in_target_5GC_ngran_node_or_target_system,
+                                NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+                        ogs_expect(r == OGS_OK);
+                    } else {
+                        amf_ue_remove(amf_ue);
+                    }
+                }
+
             } else if (state == AMF_UPDATE_SM_CONTEXT_HANDOVER_CANCEL) {
 
                 if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
