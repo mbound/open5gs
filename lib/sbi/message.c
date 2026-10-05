@@ -232,6 +232,8 @@ void ogs_sbi_message_free(ogs_sbi_message_t *message)
         OpenAPI_ue_context_create_data_free(message->UeContextCreateData);
     if (message->UeContextCreatedData)
         OpenAPI_ue_context_created_data_free(message->UeContextCreatedData);
+    if (message->UeContextRelease)
+        OpenAPI_ue_context_release_free(message->UeContextRelease);
     if (message->UeContextTransferReqData)
         OpenAPI_ue_context_transfer_req_data_free(message->UeContextTransferReqData);
     if (message->UeContextTransferRspData)
@@ -1815,6 +1817,10 @@ static char *build_json(ogs_sbi_message_t *message)
         item = OpenAPI_ue_context_created_data_convertToJSON(
                 message->UeContextCreatedData);
         ogs_assert(item);
+    } else if (message->UeContextRelease) {
+        item = OpenAPI_ue_context_release_convertToJSON(
+                message->UeContextRelease);
+        ogs_assert(item);
     } else if (message->UeContextTransferReqData) {
         item = OpenAPI_ue_context_transfer_req_data_convertToJSON(
                 message->UeContextTransferReqData);
@@ -2797,6 +2803,21 @@ static int parse_json(ogs_sbi_message_t *message,
                 }
 
                 SWITCH(message->h.resource.component[2])
+                CASE(OGS_SBI_RESOURCE_NAME_RELEASE)
+                    if (message->res_status == 0) {
+                        message->UeContextRelease =
+                            OpenAPI_ue_context_release_parseFromJSON(item);
+                        if (!message->UeContextRelease) {
+                            rv = OGS_ERROR;
+                            ogs_error("JSON parse error");
+                        }
+                    } else if (message->res_status !=
+                            OGS_SBI_HTTP_STATUS_NO_CONTENT) {
+                        ogs_error("HTTP ERROR Status : %d",
+                                message->res_status);
+                    }
+                    break;
+
                 CASE(OGS_SBI_RESOURCE_NAME_N1_N2_MESSAGES)
                     if (message->res_status == 0) {
                         message->N1N2MessageTransferReqData =
