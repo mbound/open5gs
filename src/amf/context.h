@@ -45,6 +45,16 @@ typedef struct amf_ue_s amf_ue_t;
 
 typedef uint32_t amf_m_tmsi_t;
 
+#define AMF_MAX_NUM_OF_NTN_TAC 12
+typedef struct amf_nr_ntn_tai_info_s {
+    bool presence;
+    ogs_plmn_id_t serving_plmn;
+    int num_of_tac;
+    ogs_uint24_t tac[AMF_MAX_NUM_OF_NTN_TAC];
+    bool derived_tac_presence;
+    ogs_uint24_t derived_tac;
+} amf_nr_ntn_tai_info_t;
+
 typedef enum {
     UE_CONTEXT_INITIAL_STATE = 0,
     UE_CONTEXT_TRANSFER_OLD_AMF_STATE,
@@ -220,6 +230,7 @@ struct ran_ue_s {
         ogs_5gs_tai_t   nr_tai;
         ogs_nr_cgi_t    nr_cgi;
         uint8_t         nr_cgi_gnb_id_length;
+        amf_nr_ntn_tai_info_t nr_ntn_tai;
     } saved;
 
     /* NG Holding timer for removing this context */
@@ -407,6 +418,7 @@ struct amf_ue_s {
     ogs_5gs_tai_t   nr_tai;
     ogs_nr_cgi_t    nr_cgi;
     uint8_t         nr_cgi_gnb_id_length;
+    amf_nr_ntn_tai_info_t nr_ntn_tai;
     ogs_time_t      ue_location_timestamp;
     ogs_plmn_id_t   last_visited_plmn_id;
     ogs_nas_ue_usage_setting_t ue_usage_setting;
