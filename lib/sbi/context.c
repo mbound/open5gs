@@ -2205,6 +2205,11 @@ bool ogs_sbi_discovery_option_is_matched(
         ogs_sbi_discovery_option_t *discovery_option)
 {
     ogs_sbi_nf_info_t *nf_info = NULL;
+    bool amf_info_checked = false;
+    bool amf_match_found = false;
+    bool need_amf_guami = false;
+    bool need_amf_tai = false;
+    bool need_amf_any = false;
     bool smf_info_checked = false;
     bool smf_match_found = false;
     bool need_smf_slice = false;   /* requires both S-NSSAI and DNN */
@@ -2268,6 +2273,15 @@ bool ogs_sbi_discovery_option_is_matched(
             return false;
     }
 
+    /* Determine which AMF filters are requested */
+    if (nf_instance->nf_type == OpenAPI_nf_type_AMF) {
+        need_amf_guami =
+            (requester_nf_type == OpenAPI_nf_type_AMF &&
+             discovery_option->guami_presence) ? true : false;
+        need_amf_tai = discovery_option->tai_presence ? true : false;
+        need_amf_any = (need_amf_guami || need_amf_tai) ? true : false;
+    }
+
     /* Determine which SMF filters are requested */
     if (nf_instance->nf_type == OpenAPI_nf_type_SMF) {
         need_smf_slice = (discovery_option->num_of_snssais &&
@@ -2290,23 +2304,27 @@ bool ogs_sbi_discovery_option_is_matched(
 
         /* --- AMF --- */
         if (nf_info->nf_type == OpenAPI_nf_type_AMF) {
-            if (requester_nf_type == OpenAPI_nf_type_AMF &&
-                discovery_option->guami_presence &&
+            amf_info_checked = true;
+
+            if (need_amf_guami &&
                 ogs_sbi_check_amf_info_guami(
                     &nf_info->amf,
                     &discovery_option->guami) == false)
-                return false;
+                continue;
 
             /*
-             * TS 29.510 NF discovery 'tai' filter.  AMF NF profiles
+             * TS 29.510 NF discovery 'tai' filter. AMF NF profiles
              * already retain taiList/taiRangeList, so use them to select
              * the AMF actually serving the requested target TAI.
              */
-            if (discovery_option->tai_presence &&
+            if (need_amf_tai &&
                 ogs_sbi_check_amf_info_tai(
                     &nf_info->amf,
                     &discovery_option->tai) == false)
-                return false;
+                continue;
+
+            amf_match_found = true;
+            break; /* OR logic across amfInfo blocks */
         }
 
         /* --- SMF --- */
@@ -2347,8 +2365,14 @@ bool ogs_sbi_discovery_option_is_matched(
     }
 
     /* --------------------------------------------------------------
-     * Step 3. Final validation for SMF
+     * Step 3. Final validation for AMF/SMF
      * -------------------------------------------------------------- */
+    if (nf_instance->nf_type == OpenAPI_nf_type_AMF &&
+        amf_info_checked &&
+        need_amf_any &&
+        amf_match_found == false)
+        return false;
+
     if (nf_instance->nf_type == OpenAPI_nf_type_SMF &&
         smf_info_checked &&
         need_smf_any &&
