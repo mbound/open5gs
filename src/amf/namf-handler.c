@@ -1159,6 +1159,98 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
     return OGS_OK;
 }
 
+int amf_namf_callback_handle_n2_info_notify(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
+{
+    int r;
+    int status = OGS_SBI_HTTP_STATUS_NO_CONTENT;
+    amf_ue_t *amf_ue = NULL;
+    ran_ue_t *source_ue = NULL;
+    OpenAPI_n2_information_notification_t *notification = NULL;
+    ogs_sbi_message_t sendmsg;
+    ogs_sbi_response_t *response = NULL;
+
+    ogs_assert(stream);
+    ogs_assert(recvmsg);
+
+    if (!recvmsg->h.resource.component[0]) {
+        status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
+        ogs_error("No SUPI in N2InfoNotify URI");
+        goto respond;
+    }
+
+    amf_ue = amf_ue_find_by_supi(recvmsg->h.resource.component[0]);
+    if (!amf_ue) {
+        status = OGS_SBI_HTTP_STATUS_NOT_FOUND;
+        ogs_error("Cannot find SUPI [%s]",
+                recvmsg->h.resource.component[0]);
+        goto respond;
+    }
+
+    notification = recvmsg->N2InformationNotification;
+    if (!notification) {
+        status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
+        ogs_error("[%s] No N2InformationNotification", amf_ue->supi);
+        goto respond;
+    }
+
+    if (notification->notify_reason !=
+            OpenAPI_n2_info_notify_reason_HANDOVER_COMPLETED) {
+        status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
+        ogs_error("[%s] Unsupported N2InfoNotify reason [%d]",
+                amf_ue->supi, notification->notify_reason);
+        goto respond;
+    }
+
+    if (notification->n2_notify_subscription_id &&
+        strcmp(notification->n2_notify_subscription_id, amf_ue->supi) != 0) {
+        status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
+        ogs_error("[%s] N2InfoNotify subscription id mismatch [%s]",
+                amf_ue->supi,
+                notification->n2_notify_subscription_id);
+        goto respond;
+    }
+
+    source_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (!source_ue) {
+        status = OGS_SBI_HTTP_STATUS_NOT_FOUND;
+        ogs_error("[%s] Source NG context already removed", amf_ue->supi);
+        goto respond;
+    }
+
+respond:
+    memset(&sendmsg, 0, sizeof(sendmsg));
+    response = ogs_sbi_build_response(&sendmsg, status);
+    ogs_assert(response);
+    ogs_assert(true == ogs_sbi_server_send_response(stream, response));
+
+    if (status != OGS_SBI_HTTP_STATUS_NO_CONTENT)
+        return OGS_ERROR;
+
+    /*
+     * TS 23.502 4.9.1.3.3: after HANDOVER_COMPLETED from the target AMF,
+     * the source AMF supervises release of the source NG-RAN resources.
+     * This is an inter-AMF handover, so the old AMF-UE context is removed
+     * after UEContextReleaseComplete rather than being relinked to a local
+     * target RAN context as in the same-AMF handover path.
+     */
+    r = ngap_send_ran_ue_context_release_command(
+            source_ue,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_successful_handover,
+            NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE,
+            ogs_local_conf()->time.handover.duration);
+    if (r != OGS_OK) {
+        ogs_error("[%s] Cannot start source context release after "
+                "HANDOVER_COMPLETED [error:%d]", amf_ue->supi, r);
+        return r;
+    }
+
+    ogs_info("[%s] HANDOVER_COMPLETED received; source context release started",
+            amf_ue->supi);
+    return OGS_OK;
+}
+
 int amf_namf_callback_handle_sm_context_status(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
 {
