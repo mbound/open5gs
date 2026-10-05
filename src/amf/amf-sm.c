@@ -226,6 +226,30 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                 }
 
                 SWITCH(sbi_message.h.resource.component[2])
+                CASE(OGS_SBI_RESOURCE_NAME_RELEASE)
+                    SWITCH(sbi_message.h.method)
+                    CASE(OGS_SBI_HTTP_METHOD_POST)
+                        rv = amf_namf_comm_handle_release_ue_context_request(
+                                stream, &sbi_message);
+                        if (rv != OGS_OK) {
+                            ogs_assert(true ==
+                                ogs_sbi_server_send_error(stream,
+                                    rv == OGS_NOTFOUND ?
+                                        OGS_SBI_HTTP_STATUS_NOT_FOUND :
+                                        OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                                    &sbi_message,
+                                    "ReleaseUEContext failed", NULL, NULL));
+                        }
+                        break;
+                    DEFAULT
+                        ogs_assert(true ==
+                            ogs_sbi_server_send_error(stream,
+                                OGS_SBI_HTTP_STATUS_FORBIDDEN, &sbi_message,
+                                "Invalid HTTP method", sbi_message.h.method,
+                                NULL));
+                    END
+                    break;
+
                 CASE(OGS_SBI_RESOURCE_NAME_N1_N2_MESSAGES)
                     SWITCH(sbi_message.h.method)
                     CASE(OGS_SBI_HTTP_METHOD_POST)
