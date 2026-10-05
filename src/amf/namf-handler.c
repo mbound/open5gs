@@ -360,6 +360,66 @@ cleanup:
     return OGS_ERROR;
 }
 
+int amf_namf_comm_fail_create_ue_context(
+        amf_ue_t *amf_ue, NGAP_Cause_t *cause)
+{
+    ogs_sbi_stream_t *stream = NULL;
+    ogs_sbi_message_t sendmsg;
+    ogs_sbi_response_t *response = NULL;
+    OpenAPI_ue_context_create_error_t create_error;
+    OpenAPI_problem_details_t problem;
+    OpenAPI_ng_ap_cause_t ngap_cause;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_target);
+
+    if (amf_ue->handover.create_ue_context_stream_id < OGS_MIN_POOL_ID ||
+        amf_ue->handover.create_ue_context_stream_id > OGS_MAX_POOL_ID) {
+        ogs_warn("[%s] No pending CreateUEContext stream to fail",
+                amf_ue->supi);
+        return OGS_NOTFOUND;
+    }
+
+    stream = ogs_sbi_stream_find_by_id(
+            amf_ue->handover.create_ue_context_stream_id);
+    if (!stream) {
+        amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
+        return OGS_NOTFOUND;
+    }
+
+    memset(&sendmsg, 0, sizeof(sendmsg));
+    memset(&create_error, 0, sizeof(create_error));
+    memset(&problem, 0, sizeof(problem));
+    memset(&ngap_cause, 0, sizeof(ngap_cause));
+
+    problem.title = (char *)"Target handover preparation failed";
+    problem.detail = (char *)"Target NG-RAN rejected the HandoverRequest";
+    problem.is_status = true;
+    problem.status = OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    problem.cause = (char *)"HANDOVER_FAILURE";
+    create_error.error = &problem;
+
+    if (cause) {
+        ngap_cause.group = cause->present;
+        ngap_cause.value = (int)cause->choice.radioNetwork;
+        create_error.ngap_cause = &ngap_cause;
+    }
+
+    sendmsg.UeContextCreateError = &create_error;
+    response = ogs_sbi_build_response(
+            &sendmsg, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
+    if (!response)
+        return OGS_ERROR;
+
+    if (ogs_sbi_server_send_response(stream, response) != true)
+        return OGS_ERROR;
+
+    amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
+    ogs_info("[%s] CreateUEContext failed after target HandoverFailure",
+            amf_ue->supi);
+    return OGS_OK;
+}
+
 int amf_namf_comm_complete_release_ue_context(amf_ue_t *amf_ue)
 {
     int r = OGS_OK;
