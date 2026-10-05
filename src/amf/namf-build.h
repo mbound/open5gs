@@ -41,6 +41,8 @@ char *amf_namf_comm_base64_encode_5gmm_capability(amf_ue_t *amf_ue);
 
 ogs_sbi_request_t *amf_namf_comm_build_create_ue_context(
         amf_ue_t *amf_ue, void *data);
+ogs_sbi_request_t *amf_namf_comm_build_release_ue_context(
+        amf_ue_t *amf_ue, void *data);
 ogs_sbi_request_t *amf_namf_comm_build_ue_context_transfer(
         amf_ue_t *amf_ue, void *data);
 ogs_sbi_request_t *amf_namf_comm_build_registration_status_update(
