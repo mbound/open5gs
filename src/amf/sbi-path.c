@@ -378,11 +378,16 @@ int amf_sess_sbi_discover_and_send_handover(
      */
     {
         amf_ue_t *amf_ue = amf_ue_find_by_id(sess->amf_ue_id);
-        if (amf_ue && amf_ue->handover.inter_amf_target &&
-            amf_ue->handover.create_ue_context_stream_id >= OGS_MIN_POOL_ID &&
-            amf_ue->handover.create_ue_context_stream_id <= OGS_MAX_POOL_ID)
-            xact->assoc_stream_id =
-                amf_ue->handover.create_ue_context_stream_id;
+        if (amf_ue && amf_ue->handover.inter_amf_target) {
+            ogs_pool_id_t stream_id =
+                (state == AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_CANCEL) ?
+                    amf_ue->handover.release_ue_context_stream_id :
+                    amf_ue->handover.create_ue_context_stream_id;
+
+            if (stream_id >= OGS_MIN_POOL_ID &&
+                stream_id <= OGS_MAX_POOL_ID)
+                xact->assoc_stream_id = stream_id;
+        }
     }
 
     rv = ogs_sbi_discover_and_send(xact);
