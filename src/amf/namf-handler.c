@@ -360,6 +360,117 @@ cleanup:
     return OGS_ERROR;
 }
 
+int amf_namf_comm_complete_release_ue_context(amf_ue_t *amf_ue)
+{
+    int r = OGS_OK;
+    ogs_sbi_stream_t *stream = NULL;
+    ran_ue_t *target_ue = NULL;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_target);
+
+    if (amf_ue->handover.release_ue_context_stream_id >= OGS_MIN_POOL_ID &&
+        amf_ue->handover.release_ue_context_stream_id <= OGS_MAX_POOL_ID) {
+        stream = ogs_sbi_stream_find_by_id(
+                amf_ue->handover.release_ue_context_stream_id);
+        if (stream) {
+            if (ogs_sbi_send_http_status_no_content(stream) != true) {
+                ogs_error("[%s] Cannot send ReleaseUEContext response",
+                        amf_ue->supi);
+                r = OGS_ERROR;
+            }
+        } else {
+            ogs_warn("[%s] ReleaseUEContext stream already closed",
+                    amf_ue->supi);
+        }
+    }
+    amf_ue->handover.release_ue_context_stream_id = OGS_INVALID_POOL_ID;
+
+    target_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (target_ue) {
+        int rv = ngap_send_ran_ue_context_release_command(
+                target_ue,
+                NGAP_Cause_PR_radioNetwork,
+                NGAP_CauseRadioNetwork_handover_cancelled,
+                NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+        if (rv != OGS_OK) {
+            ogs_error("[%s] Cannot release target NG context after cancel "
+                    "[error:%d]", amf_ue->supi, rv);
+            r = rv;
+        }
+    } else {
+        /*
+         * No target NG context remains; the transferred AMF UE context has
+         * no owner after cancellation and can be removed immediately.
+         */
+        amf_ue_remove(amf_ue);
+    }
+
+    return r;
+}
+
+int amf_namf_comm_handle_release_ue_context_request(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
+{
+    int r;
+    int xact_count;
+    amf_ue_t *amf_ue = NULL;
+    ran_ue_t *target_ue = NULL;
+    amf_sess_t *sess = NULL;
+    OpenAPI_ue_context_release_t *release = NULL;
+    char *ue_context_id = NULL;
+    amf_nsmf_pdusession_sm_context_param_t param;
+
+    ogs_assert(stream);
+    ogs_assert(recvmsg);
+
+    release = recvmsg->UeContextRelease;
+    ue_context_id = recvmsg->h.resource.component[1];
+    if (!release || !ue_context_id || !release->supi ||
+        strcmp(ue_context_id, release->supi) != 0) {
+        ogs_error("Invalid UeContextRelease");
+        return OGS_ERROR;
+    }
+
+    amf_ue = amf_ue_find_by_supi(ue_context_id);
+    if (!amf_ue || !amf_ue->handover.inter_amf_target) {
+        ogs_error("[%s] No target inter-AMF UE context", ue_context_id);
+        return OGS_NOTFOUND;
+    }
+
+    target_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    amf_ue->handover.release_ue_context_stream_id =
+        ogs_sbi_id_from_stream(stream);
+
+    xact_count = amf_sess_xact_count(amf_ue);
+    ogs_list_for_each(&amf_ue->sess_list, sess) {
+        if (!SESSION_CONTEXT_IN_SMF(sess))
+            continue;
+
+        memset(&param, 0, sizeof(param));
+        param.hoState = OpenAPI_ho_state_CANCELLED;
+        if (release->ngap_cause) {
+            param.ngApCause.group = release->ngap_cause->group;
+            param.ngApCause.value = release->ngap_cause->value;
+        }
+
+        r = amf_sess_sbi_discover_and_send_handover(
+                OpenAPI_service_name_nsmf_pdusession, NULL,
+                amf_nsmf_pdusession_build_update_sm_context,
+                target_ue, sess,
+                AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_CANCEL, &param);
+        if (r != OGS_OK)
+            return r;
+    }
+
+    if (xact_count == amf_sess_xact_count(amf_ue))
+        return amf_namf_comm_complete_release_ue_context(amf_ue);
+
+    ogs_info("[%s] ReleaseUEContext accepted; waiting for SMF cancel",
+            amf_ue->supi);
+    return OGS_OK;
+}
+
 int amf_namf_comm_send_create_ue_context_response(amf_ue_t *amf_ue)
 {
     int i, rv = OGS_ERROR;
