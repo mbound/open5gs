@@ -4980,6 +4980,18 @@ void ngap_handle_handover_notification(
         ogs_assert(r != OGS_ERROR);
     }
 
+    /*
+     * TS 23.502 4.9.1.3.3 step 6a: after target NG-RAN confirms the
+     * handover, notify the source AMF before reporting handover completion
+     * to the SMF.  The source uses this callback to release its old NG-RAN
+     * and AMF UE context.
+     */
+    if (amf_ue->handover.inter_amf_target) {
+        if (amf_sbi_send_inter_amf_handover_complete(amf_ue) != true)
+            ogs_error("[%s] Failed to send HANDOVER_COMPLETED to source AMF",
+                    amf_ue->supi ? amf_ue->supi : "Unknown");
+    }
+
     /* Save the number of ongoing SMF transactions before processing sessions */
     xact_count = amf_sess_xact_count(amf_ue);
 
