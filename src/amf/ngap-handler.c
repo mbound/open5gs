@@ -4549,18 +4549,6 @@ void ngap_handle_handover_cancel(
         return;
     }
 
-    target_ue = ran_ue_find_by_id(source_ue->target_ue_id);
-    if (!target_ue) {
-        ogs_error("Cannot find Source-UE Context [%lld]",
-                (long long)amf_ue_ngap_id);
-        r = ngap_send_error_indication(
-                gnb, &source_ue->ran_ue_ngap_id, &source_ue->amf_ue_ngap_id,
-                NGAP_Cause_PR_radioNetwork,
-                NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return;
-    }
     amf_ue = amf_ue_find_by_id(source_ue->amf_ue_id);
     if (!amf_ue) {
         ogs_error("Cannot find AMF-UE Context [%lld]",
@@ -4574,13 +4562,6 @@ void ngap_handle_handover_cancel(
         return;
     }
 
-    ogs_debug("    Source : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
-        (long long)source_ue->ran_ue_ngap_id,
-        (long long)source_ue->amf_ue_ngap_id);
-    ogs_debug("    Target : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
-        (long long)target_ue->ran_ue_ngap_id,
-        (long long)target_ue->amf_ue_ngap_id);
-
     if (!Cause) {
         ogs_error("No Cause");
         r = ngap_send_error_indication(
@@ -4590,6 +4571,44 @@ void ngap_handle_handover_cancel(
         ogs_assert(r != OGS_ERROR);
         return;
     }
+
+    /*
+     * With AMF relocation the target RAN context belongs to the target AMF,
+     * so there is deliberately no source_ue->target_ue_id locally.
+     * Release the transferred UE context through Namf_Communication and
+     * acknowledge NGAP HandoverCancel only after the target AMF returns 204.
+     */
+    if (amf_ue->handover.inter_amf_source) {
+        if (amf_sbi_send_inter_amf_handover_cancel(amf_ue, Cause) != true) {
+            ogs_error("[%s] Cannot initiate inter-AMF handover cancel",
+                    amf_ue->supi);
+            r = ngap_send_error_indication2(source_ue,
+                    NGAP_Cause_PR_radioNetwork,
+                    NGAP_CauseRadioNetwork_handover_cancelled);
+            ogs_expect(r == OGS_OK);
+        }
+        return;
+    }
+
+    target_ue = ran_ue_find_by_id(source_ue->target_ue_id);
+    if (!target_ue) {
+        ogs_error("Cannot find Target-UE Context [%lld]",
+                (long long)amf_ue_ngap_id);
+        r = ngap_send_error_indication(
+                gnb, &source_ue->ran_ue_ngap_id, &source_ue->amf_ue_ngap_id,
+                NGAP_Cause_PR_radioNetwork,
+                NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
+    ogs_debug("    Source : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
+        (long long)source_ue->ran_ue_ngap_id,
+        (long long)source_ue->amf_ue_ngap_id);
+    ogs_debug("    Target : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
+        (long long)target_ue->ran_ue_ngap_id,
+        (long long)target_ue->amf_ue_ngap_id);
     ogs_debug("    Cause[Group:%d Cause:%d]",
             Cause->present, (int)Cause->choice.radioNetwork);
 
