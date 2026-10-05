@@ -4304,9 +4304,13 @@ void ngap_handle_handover_failure(
 {
     char buf[OGS_ADDRSTRLEN];
     int i, r;
+    int xact_count;
 
+    amf_ue_t *amf_ue = NULL;
+    amf_sess_t *sess = NULL;
     ran_ue_t *source_ue = NULL, *target_ue = NULL;
     uint64_t amf_ue_ngap_id;
+    amf_nsmf_pdusession_sm_context_param_t param;
 
     NGAP_UnsuccessfulOutcome_t *unsuccessfulOutcome = NULL;
     NGAP_HandoverFailure_t *HandoverFailure = NULL;
@@ -4399,7 +4403,65 @@ void ngap_handle_handover_failure(
         return;
     }
 
+    amf_ue = amf_ue_find_by_id(target_ue->amf_ue_id);
+    if (!amf_ue) {
+        ogs_error("Cannot find AMF-UE Context [%lld]",
+                (long long)amf_ue_ngap_id);
+        return;
+    }
+
+    if (!Cause) {
+        ogs_error("No Cause");
+        r = ngap_send_error_indication(
+                gnb, &target_ue->ran_ue_ngap_id, &target_ue->amf_ue_ngap_id,
+                NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
     source_ue = ran_ue_find_by_id(target_ue->source_ue_id);
+    if (!source_ue && amf_ue->handover.inter_amf_target) {
+        /*
+         * The source RAN UE lives at the source AMF. Fail the pending
+         * CreateUEContext transaction, roll the SMF handover state back to
+         * CANCELLED, then release the transferred target UE/RAN context.
+         */
+        r = amf_namf_comm_fail_create_ue_context(amf_ue, Cause);
+        if (r != OGS_OK && r != OGS_NOTFOUND)
+            ogs_error("[%s] Cannot fail CreateUEContext [error:%d]",
+                    amf_ue->supi, r);
+
+        xact_count = amf_sess_xact_count(amf_ue);
+        ogs_list_for_each(&amf_ue->sess_list, sess) {
+            if (!SESSION_CONTEXT_IN_SMF(sess))
+                continue;
+
+            memset(&param, 0, sizeof(param));
+            param.hoState = OpenAPI_ho_state_CANCELLED;
+            param.ngApCause.group = Cause->present;
+            param.ngApCause.value = (int)Cause->choice.radioNetwork;
+
+            r = amf_sess_sbi_discover_and_send_handover(
+                    OpenAPI_service_name_nsmf_pdusession, NULL,
+                    amf_nsmf_pdusession_build_update_sm_context,
+                    target_ue, sess,
+                    AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_FAILURE,
+                    &param);
+            ogs_expect(r == OGS_OK);
+        }
+
+        if (xact_count == amf_sess_xact_count(amf_ue)) {
+            r = ngap_send_ran_ue_context_release_command(
+                    target_ue,
+                    NGAP_Cause_PR_radioNetwork,
+                    NGAP_CauseRadioNetwork_ho_failure_in_target_5GC_ngran_node_or_target_system,
+                    NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+            ogs_expect(r == OGS_OK);
+        }
+        return;
+    }
+
     if (!source_ue) {
         ogs_error("Cannot find Source-UE Context [%lld]",
                 (long long)amf_ue_ngap_id);
@@ -4418,16 +4480,6 @@ void ngap_handle_handover_failure(
     ogs_debug("    Target : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
         (long long)target_ue->ran_ue_ngap_id,
         (long long)target_ue->amf_ue_ngap_id);
-
-    if (!Cause) {
-        ogs_error("No Cause");
-        r = ngap_send_error_indication(
-                gnb, &target_ue->ran_ue_ngap_id, &target_ue->amf_ue_ngap_id,
-                NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return;
-    }
     ogs_debug("    Cause[Group:%d Cause:%d]",
             Cause->present, (int)Cause->choice.radioNetwork);
 
