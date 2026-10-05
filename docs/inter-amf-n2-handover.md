@@ -6,8 +6,17 @@ This branch implements connected-mode 5G SA N2 handover with AMF relocation,
 with inter-PLMN operation as the eventual target.
 
 The first milestone (M1) deliberately keeps the source and target AMFs in the
-same PLMN and connects them directly over the service-based interface.  This
-isolates the AMF-relocation procedure before adding SEPP/N32 routing.
+same PLMN and connects them directly over the service-based interface. This is
+only a procedure-isolation harness for AMF relocation. It is **not** the target
+TN-NTN inter-PLMN architecture.
+
+The target inter-PLMN architecture is **home-routed (HR) roaming**. The PDU
+Session remains anchored by the H-SMF/H-UPF (PSA) in the HPLMN. When the UE is
+served by the other PLMN, the visited side uses a V-SMF/V-UPF and reaches the
+home anchor over N9. Inter-PLMN SBA signalling crosses the PLMN boundary via
+vSEPP/hSEPP over N32. N14/Namf_Communication supplies the AMF-relocation
+control-plane continuity; it does not replace the HR session anchor or the N9
+user-plane path.
 
 Baseline: `mbound/open5gs` commit
 `5877b43196fca0b185b266f6616979c86c962a4c`.
@@ -27,6 +36,43 @@ The branch now contains the first end-to-end **single-PDU-session** implementati
 - the existing same-AMF N2 handover path remains the local-target fast path.
 
 M1 is deliberately constrained to one PDU session and direct AMF-to-AMF SBI. Failure/cancel coverage is not yet complete, and inter-PLMN SEPP/N32 routing remains M2. The branch includes SBI parsing coverage for CreateUEContext; repository CI has not yet executed on this fork, so build/integration validation is still required before treating the branch as merge-ready.
+
+## Blocking gaps for TN-NTN inter-PLMN testing
+
+The current branch is not yet sufficient for the TN-NTN two-PLMN test. The
+following items are blockers rather than optional cleanup:
+
+1. **Target AMF selection by target TAI.** The source side currently builds NRF
+   discovery options from the selected target TAI/PLMN, but the current NRF
+   matching path does not reliably distinguish two AMFs in one PLMN by TAI.
+   M1 therefore needs either NRF TAI matching support or an explicit/static
+   target-AMF override for the controlled lab.
+
+2. **Inter-AMF completion notification.** The branch contains
+   `amf_namf_callback_build_n2_info_notify()` with
+   `HANDOVER_COMPLETED`, but the target-AMF HandoverNotify path does not
+   invoke it. Consequently the source AMF is not informed that execution
+   completed and cannot perform the old source-side UE/RAN cleanup required
+   by the inter-AMF procedure.
+
+3. **Cancel/failure rollback.** Inter-AMF Handover Cancel and target
+   HandoverFailure paths are not yet mapped to the corresponding
+   Namf_Communication cleanup/notification behaviour. Target AMF UE/session
+   state and source handover state therefore need explicit rollback.
+
+4. **NTN location information.** The current NGAP location handling consumes
+   the ordinary NR-CGI/TAI path but does not yet preserve the NTN-specific
+   location extensions needed by the TN-NTN tests, including NR NTN TAI
+   Information and Mapped Cell ID where present.
+
+5. **Validation.** The branch has not been built or executed in CI and does
+   not yet contain a reproducible two-AMF/two-gNB topology test. A successful
+   Meson build plus a two-AMF integration test is required before M1 can be
+   considered complete.
+
+For the controlled M1 harness both AMFs may share one SMF/UPF and gNB IDs must
+be unique across the two AMFs. That topology is deliberately non-roaming and
+exists only to isolate the N14/NGAP state machine before HR roaming is enabled.
 
 ## Standards baseline
 
@@ -257,27 +303,55 @@ Add explicit rollback for:
 No target AMF-UE or RAN-UE object may survive a failed preparation unless a
 subsequent standards procedure explicitly requires it.
 
-## M2: inter-PLMN routing
+## Inter-PLMN target architecture: home-routed roaming
 
-After direct two-AMF M1 works, add the PLMN boundary:
+The TN-NTN inter-PLMN baseline is **not** "the M1 topology with different PLMN
+IDs". It is the 5GS home-routed roaming architecture.
 
 ```text
-S-AMF -> S-SCP/SEPP == N32 == T-SEPP/SCP -> T-AMF
+                 control plane / inter-PLMN SBI
+        HPLMN                                      VPLMN
+   +-------------+        N32 / SEPP          +-------------+
+   | H-SEPP      |============================| V-SEPP      |
+   +-------------+                            +-------------+
+          |                                         |
+       H-AMF / S-AMF  <--- N14/Namf ------------> V-AMF / T-AMF
+          |                                         |
+        H-SMF <--------------- N16 -------------- V-SMF
+          |                                         |
+        H-UPF (PSA) <----------- N9 ------------ V-UPF
+          |                                         |
+          DN                                  target TN/NTN RAN
 ```
 
-Open5GS already has SEPP/N32 infrastructure and the SBI discovery layer already
-supports target/requester PLMN lists.  M2 should therefore preserve the same
-Namf_Communication transaction and change routing/discovery rather than the
-handover state machine.
+For the baseline test:
 
-M2 validation includes:
+- the PDU Session anchor remains the H-SMF/H-UPF (PSA);
+- a visited V-SMF/V-UPF is inserted/used as required by the HR roaming
+  procedure;
+- the visited user plane reaches the home PSA over N9;
+- inter-PLMN service-based signalling traverses the two SEPPs over N32;
+- N14/Namf_Communication carries the AMF relocation/context-transfer part of
+  the N2 handover, while SMF/V-SMF and N9 updates preserve PDU-session/user-plane
+  continuity.
 
-- target PLMN from NGAP TargetID/TAI;
-- target AMF selection/discovery in the target PLMN;
-- requester/target PLMN discovery attributes;
-- S-NSSAI mapping and target support checks;
-- SEPP/N32 traversal;
-- roaming session architecture constraints.
+TS 23.502 explicitly redirects inter-PLMN N2 handover in an HR roaming
+scenario to the clause 4.23 procedures. Those procedures preserve the anchor
+SMF/PSA while allowing the intermediate/visited SMF and UPF path to be
+inserted, changed, or removed.
+
+### Delivery milestones
+
+- **M1** — same PLMN, direct S-AMF↔T-AMF, one PDU session, shared SMF/UPF;
+  complete and test the N14/NGAP state machine.
+- **M2** — close M1 blockers: deterministic/TAI-aware T-AMF selection,
+  HANDOVER_COMPLETED callback/source cleanup, cancel/failure rollback, NTN
+  location IEs, and a two-AMF/two-gNB integration test.
+- **M3** — actual inter-PLMN HR testbed: H-SMF/H-UPF anchor, V-SMF/V-UPF,
+  N9, vSEPP↔hSEPP N32, inter-PLMN slice/PLMN mapping and target selection.
+- **M4** — expand beyond the controlled one-session baseline: multi-session
+  partial success, forwarding variants, I-SMF/I-UPF relocation variants,
+  policy/PCF relocation where required, and broader roaming cases.
 
 ## Initial non-goals
 
