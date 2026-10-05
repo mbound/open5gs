@@ -22,6 +22,7 @@
 #include "ngap-path.h"
 #include "nnrf-handler.h"
 #include "n5geir-build.h"
+#include "namf-build.h"
 
 int amf_sbi_open(void)
 {
@@ -1074,6 +1075,109 @@ static int client_notify_cb(
     ogs_sbi_message_free(&message);
     ogs_sbi_response_free(response);
     return OGS_OK;
+}
+
+static int client_inter_amf_handover_complete_cb(
+        int status, ogs_sbi_response_t *response, void *data)
+{
+    int rv;
+    ogs_sbi_message_t message;
+
+    if (status != OGS_OK) {
+        ogs_log_message(
+                status == OGS_DONE ? OGS_LOG_DEBUG : OGS_LOG_WARN, 0,
+                "HANDOVER_COMPLETED callback failed [%d]", status);
+        if (response)
+            ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    ogs_assert(response);
+
+    memset(&message, 0, sizeof(message));
+    rv = ogs_sbi_parse_response(&message, response);
+    if (rv != OGS_OK) {
+        ogs_error("Cannot parse HANDOVER_COMPLETED response");
+        ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    if (message.res_status != OGS_SBI_HTTP_STATUS_OK &&
+        message.res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT) {
+        ogs_error("HANDOVER_COMPLETED notification failed [HTTP:%d]",
+                message.res_status);
+        rv = OGS_ERROR;
+    } else {
+        rv = OGS_OK;
+    }
+
+    ogs_sbi_message_free(&message);
+    ogs_sbi_response_free(response);
+    return rv;
+}
+
+bool amf_sbi_send_inter_amf_handover_complete(amf_ue_t *amf_ue)
+{
+    bool rc;
+    ogs_sbi_request_t *request = NULL;
+    ogs_sbi_client_t *client = NULL;
+    OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
+    char *fqdn = NULL;
+    uint16_t port = 0;
+    ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_target);
+
+    if (!amf_ue->handover.n2_notify_uri) {
+        ogs_error("[%s] No n2NotifyUri for HANDOVER_COMPLETED",
+                amf_ue->supi ? amf_ue->supi : "Unknown");
+        return false;
+    }
+
+    rc = ogs_sbi_getaddr_from_uri(
+            &scheme, &fqdn, &port, &addr, &addr6,
+            amf_ue->handover.n2_notify_uri);
+    if (rc == false || scheme == OpenAPI_uri_scheme_NULL) {
+        ogs_error("[%s] Invalid n2NotifyUri [%s]",
+                amf_ue->supi ? amf_ue->supi : "Unknown",
+                amf_ue->handover.n2_notify_uri);
+        goto cleanup;
+    }
+
+    client = ogs_sbi_client_find(scheme, fqdn, port, addr, addr6);
+    if (!client)
+        client = ogs_sbi_client_add(scheme, fqdn, port, addr, addr6);
+    if (!client) {
+        ogs_error("[%s] Cannot create SBI client for n2NotifyUri",
+                amf_ue->supi ? amf_ue->supi : "Unknown");
+        goto cleanup;
+    }
+
+    request = amf_namf_callback_build_n2_info_notify(amf_ue, NULL);
+    if (!request) {
+        ogs_error("[%s] Cannot build HANDOVER_COMPLETED notification",
+                amf_ue->supi ? amf_ue->supi : "Unknown");
+        goto cleanup;
+    }
+
+    rc = ogs_sbi_send_request_to_client(
+            client, client_inter_amf_handover_complete_cb, request, NULL);
+    if (rc != true)
+        ogs_error("[%s] Cannot send HANDOVER_COMPLETED notification",
+                amf_ue->supi ? amf_ue->supi : "Unknown");
+
+cleanup:
+    if (request)
+        ogs_sbi_request_free(request);
+    if (fqdn)
+        ogs_free(fqdn);
+    if (addr)
+        ogs_freeaddrinfo(addr);
+    if (addr6)
+        ogs_freeaddrinfo(addr6);
+
+    return rc;
 }
 
 bool amf_sbi_send_n1_n2_failure_notify(
