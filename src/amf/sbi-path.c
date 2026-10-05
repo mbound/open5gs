@@ -1118,7 +1118,7 @@ static int client_inter_amf_handover_complete_cb(
 
 bool amf_sbi_send_inter_amf_handover_complete(amf_ue_t *amf_ue)
 {
-    bool rc;
+    bool rc = false;
     ogs_sbi_request_t *request = NULL;
     ogs_sbi_client_t *client = NULL;
     OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
@@ -1135,10 +1135,10 @@ bool amf_sbi_send_inter_amf_handover_complete(amf_ue_t *amf_ue)
         return false;
     }
 
-    rc = ogs_sbi_getaddr_from_uri(
+    if (ogs_sbi_getaddr_from_uri(
             &scheme, &fqdn, &port, &addr, &addr6,
-            amf_ue->handover.n2_notify_uri);
-    if (rc == false || scheme == OpenAPI_uri_scheme_NULL) {
+            amf_ue->handover.n2_notify_uri) == false ||
+        scheme == OpenAPI_uri_scheme_NULL) {
         ogs_error("[%s] Invalid n2NotifyUri [%s]",
                 amf_ue->supi ? amf_ue->supi : "Unknown",
                 amf_ue->handover.n2_notify_uri);
