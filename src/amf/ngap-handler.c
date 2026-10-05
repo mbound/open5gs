@@ -3756,6 +3756,7 @@ void ngap_handle_handover_required(
          * Preserve the source-side handover context while the
          * Namf_Communication transaction is outstanding.
          */
+        amf_ue->handover.inter_amf_source = true;
         amf_ue->handover.type = *HandoverType;
         amf_ue->handover.group = Cause->present;
         amf_ue->handover.cause = (int)Cause->choice.radioNetwork;
