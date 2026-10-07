@@ -23,9 +23,9 @@
  * for static integer to string conversion */
 #define OGS_MAX_NF_INSTANCES        4
 
-static ogs_thread_t *nrf_thread = NULL;
-static ogs_thread_t *scp_thread = NULL;
-static ogs_thread_t *sepp_thread = NULL;
+static ogs_thread_t *nrf_threads[OGS_MAX_NF_INSTANCES] = { NULL };
+static ogs_thread_t *scp_threads[OGS_MAX_NF_INSTANCES] = { NULL };
+static ogs_thread_t *sepp_threads[OGS_MAX_NF_INSTANCES] = { NULL };
 static ogs_thread_t *upf_threads[OGS_MAX_NF_INSTANCES] = { NULL };
 static ogs_thread_t *smf_threads[OGS_MAX_NF_INSTANCES] = { NULL };
 static ogs_thread_t *amf_threads[OGS_MAX_NF_INSTANCES] = { NULL };
@@ -91,11 +91,14 @@ int app_initialize(const char *const argv[])
     }
 
     if (ogs_global_conf()->parameter.no_nrf == 0)
-        nrf_thread = test_child_create("nrf", 0, argv_out);
+        run_threads("nrf", ogs_global_conf()->parameter.nrf_count,
+                argv_out, i, nrf_threads);
     if (ogs_global_conf()->parameter.no_scp == 0)
-        scp_thread = test_child_create("scp", 0, argv_out);
+        run_threads("scp", ogs_global_conf()->parameter.scp_count,
+                argv_out, i, scp_threads);
     if (ogs_global_conf()->parameter.no_sepp == 0)
-        sepp_thread = test_child_create("sepp", 0, argv_out);
+        run_threads("sepp", ogs_global_conf()->parameter.sepp_count,
+                argv_out, i, sepp_threads);
 
     if (ogs_global_conf()->parameter.no_upf == 0)
         run_threads("upf", ogs_global_conf()->parameter.upf_count,
@@ -186,17 +189,19 @@ void app_terminate(void)
             ausf_threads[i] = NULL;
         }
     }
-    if (sepp_thread) {
-        ogs_thread_destroy(sepp_thread);
-        sepp_thread = NULL;
-    }
-    if (scp_thread) {
-        ogs_thread_destroy(scp_thread);
-        scp_thread = NULL;
-    }
-    if (nrf_thread) {
-        ogs_thread_destroy(nrf_thread);
-        nrf_thread = NULL;
+    for (i = 0; i < OGS_MAX_NF_INSTANCES; i++) {
+        if (sepp_threads[i]) {
+            ogs_thread_destroy(sepp_threads[i]);
+            sepp_threads[i] = NULL;
+        }
+        if (scp_threads[i]) {
+            ogs_thread_destroy(scp_threads[i]);
+            scp_threads[i] = NULL;
+        }
+        if (nrf_threads[i]) {
+            ogs_thread_destroy(nrf_threads[i]);
+            nrf_threads[i] = NULL;
+        }
     }
 }
 
