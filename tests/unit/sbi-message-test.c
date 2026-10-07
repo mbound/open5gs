@@ -1422,6 +1422,75 @@ static void sbi_message_test15(abts_case *tc, void *data)
     ogs_sbi_request_free(request);
 }
 
+static void sbi_message_test16(abts_case *tc, void *data)
+{
+    const char *body =
+        "{"
+        "\"n2InfoContainer\":{"
+            "\"n2InformationClass\":\"RAN\","
+            "\"ranInfo\":{"
+                "\"n2InfoContent\":{"
+                    "\"ngapIeType\":\"RAN_STATUS_TRANS_CONTAINER\","
+                    "\"ngapData\":{\"contentId\":\"ngap-ran-status\"}"
+                "}"
+            "}"
+        "}"
+        "}";
+    ogs_sbi_request_t *request = NULL;
+    ogs_sbi_message_t message;
+    int rv;
+
+    request = ogs_sbi_request_new();
+    ABTS_PTR_NOTNULL(tc, request);
+    if (!request) return;
+
+    request->h.method = ogs_strdup(OGS_SBI_HTTP_METHOD_POST);
+    request->h.uri = ogs_strdup(
+            "/namf-comm/v1/ue-contexts/"
+            "imsi-001010123456789/n1-n2-messages");
+    request->http.content = ogs_strdup(body);
+    request->http.content_length = strlen(body);
+    ogs_sbi_header_set(request->http.headers,
+            OGS_SBI_CONTENT_TYPE, OGS_SBI_CONTENT_JSON_TYPE);
+
+    memset(&message, 0, sizeof(message));
+    rv = ogs_sbi_parse_request(&message, request);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    if (rv == OGS_OK) {
+        OpenAPI_n2_info_container_t *container = NULL;
+
+        ABTS_PTR_NOTNULL(tc, message.N1N2MessageTransferReqData);
+        if (message.N1N2MessageTransferReqData) {
+            ABTS_TRUE(tc,
+                    message.N1N2MessageTransferReqData->is_pdu_session_id ==
+                    false);
+            container =
+                message.N1N2MessageTransferReqData->n2_info_container;
+            ABTS_PTR_NOTNULL(tc, container);
+            if (container) {
+                ABTS_INT_EQUAL(tc, OpenAPI_n2_information_class_RAN,
+                        container->n2_information_class);
+                ABTS_PTR_NOTNULL(tc, container->ran_info);
+                if (container->ran_info &&
+                    container->ran_info->n2_info_content) {
+                    ABTS_INT_EQUAL(tc,
+                            OpenAPI_ngap_ie_type_RAN_STATUS_TRANS_CONTAINER,
+                            container->ran_info->n2_info_content->ngap_ie_type);
+                    ABTS_PTR_NOTNULL(tc,
+                            container->ran_info->n2_info_content->ngap_data);
+                    if (container->ran_info->n2_info_content->ngap_data)
+                        ABTS_STR_EQUAL(tc, "ngap-ran-status",
+                            container->ran_info->n2_info_content->
+                                ngap_data->content_id);
+                }
+            }
+        }
+        ogs_sbi_message_free(&message);
+    }
+
+    ogs_sbi_request_free(request);
+}
+
 abts_suite *test_sbi_message(abts_suite *suite)
 {
     size_t i;
@@ -1453,6 +1522,7 @@ abts_suite *test_sbi_message(abts_suite *suite)
     abts_run_test(suite, sbi_message_test13, NULL);
     abts_run_test(suite, sbi_message_test14, NULL);
     abts_run_test(suite, sbi_message_test15, NULL);
+    abts_run_test(suite, sbi_message_test16, NULL);
 
     return suite;
 }
