@@ -1525,6 +1525,72 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                         "missing upCnxState and pfcp_flags");
                             }
                             break;
+                        case OpenAPI_request_indication_PDU_SES_MOB:
+                            /*
+                             * HPLMN -> VPLMN HR handover execution.
+                             * Preparation staged the target V-SMF/V-UPF N9
+                             * endpoint; execution commits that endpoint at
+                             * the retained H-UPF without changing the PSA.
+                             */
+                            if (!INTER_PLMN_HANDOVER_PREP_IN_HSMF(sess)) {
+                                hsmf_update_send_bad_request(
+                                        stream, sbi_message, sess,
+                                        "No staged inter-PLMN handover");
+                                break;
+                            }
+
+                            if (sess->nsmf_param.dl_teid !=
+                                    sess->hsmf_handover.target_vcn_teid ||
+                                memcmp(&sess->nsmf_param.dl_ip,
+                                    &sess->hsmf_handover.target_vcn_ip,
+                                    sizeof(sess->nsmf_param.dl_ip)) != 0) {
+                                hsmf_update_send_bad_request(
+                                        stream, sbi_message, sess,
+                                        "Target V-CN endpoint mismatch");
+                                break;
+                            }
+
+                            ogs_list_for_each(
+                                    &sess->bearer_list, qos_flow) {
+                                ogs_pfcp_far_t *dl_far = qos_flow->dl_far;
+                                ogs_pfcp_pdr_t *ul_pdr = qos_flow->ul_pdr;
+
+                                ogs_assert(dl_far);
+                                ogs_assert(ul_pdr);
+
+                                /*
+                                 * The same H-UPF PDR/FAR pair previously
+                                 * terminated N3. After inter-PLMN mobility
+                                 * it terminates roaming N9 toward the V-UPF.
+                                 */
+                                ul_pdr->src_if_type_presence = true;
+                                ul_pdr->src_if_type =
+                                    OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING;
+
+                                dl_far->dst_if_type_presence = true;
+                                dl_far->dst_if_type =
+                                    OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING;
+                                dl_far->apply_action =
+                                    OGS_PFCP_APPLY_ACTION_FORW;
+
+                                ogs_assert(OGS_OK ==
+                                    ogs_pfcp_ip_to_outer_header_creation(
+                                        &sess->hsmf_handover.target_vcn_ip,
+                                        &dl_far->outer_header_creation,
+                                        &dl_far->outer_header_creation_len));
+                                dl_far->outer_header_creation.teid =
+                                    sess->hsmf_handover.target_vcn_teid;
+                            }
+
+                            ogs_assert(OGS_OK ==
+                                smf_5gc_pfcp_send_all_pdr_modification_request(
+                                    sess, stream,
+                                    OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
+                                    OGS_PFCP_MODIFY_DL_ONLY|
+                                    OGS_PFCP_MODIFY_ACTIVATE,
+                                    0, 0));
+                            break;
+
                         case OpenAPI_request_indication_UE_REQ_PDU_SES_REL:
                         case OpenAPI_request_indication_NW_REQ_PDU_SES_REL:
                             if (sess->nsmf_param.request_indication ==
