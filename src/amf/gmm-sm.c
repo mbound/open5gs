@@ -1792,7 +1792,18 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                 break;
             }
 
-            if (!AMF_UE_HAVE_SUCI(amf_ue)) {
+            /*
+             * A context received by N2 handover (CreateUEContext) has the
+             * SUPI but no SUCI. Its integrity-verified Mobility Registration
+             * Update needs no identity: TS 23.502 4.9.1.3.3 step 12 skips the
+             * context transfer and the UE is already identified. Asking for
+             * the identity would also release the UE's PDU sessions on the
+             * Identity Response path below.
+             */
+            if (!AMF_UE_HAVE_SUCI(amf_ue) &&
+                !(AMF_UE_HAVE_SUPI(amf_ue) && h.integrity_protected &&
+                  amf_ue->selected_int_algorithm != 0 &&
+                  SECURITY_CONTEXT_IS_VALID(amf_ue))) {
                 CLEAR_AMF_UE_TIMER(amf_ue->t3570);
                 r = nas_5gs_send_identity_request(amf_ue);
                 ogs_expect(r == OGS_OK);
