@@ -1,190 +1,151 @@
-# Inter-AMF N2 Handover (N14/Namf_Communication) — Implementation Map
+# Inter-AMF N2 Handover — implementation map
 
 Branch: `inter-amf-n2-ho`
 
 Baseline: `5877b43196fca0b185b266f6616979c86c962a4c`
 
-## Scope
-
-Initial implementation target (M1):
+## Controlled M1/M2 scope
 
 - 5G SA only.
-- Two Open5GS AMFs.
-- Same PLMN first, direct SBI between AMFs.
-- Connected-mode N2 handover with AMF relocation.
-- One PDU session / one S-NSSAI initially.
-- Both AMFs may share one SMF/UPF only for this procedure-isolation harness.
-- gNB IDs must be unique across the two AMFs.
+- Two Open5GS AMFs in one PLMN.
+- Direct AMF-to-AMF SBI.
+- One PDU session / one S-NSSAI.
+- Shared SMF/UPF for procedure isolation.
+- Distinct AMF-served TAIs and unique gNB IDs.
+- Direct forwarding path.
 
-The production/lab target for **inter-PLMN TN-NTN handover is home-routed
-roaming**, not the M1 shared-SMF/UPF topology. The home H-SMF/H-UPF remains the
-PDU Session anchor, the visited side uses V-SMF/V-UPF and N9 toward the home
-anchor, and inter-PLMN SBA signalling traverses SEPPs over N32.
+This is not the final inter-PLMN architecture. M3 is HR roaming with
+H-SMF/H-UPF home anchoring, V-SMF/V-UPF, N9 and SEPP/N32.
 
-The normative procedure set is therefore:
-- TS 23.502 §4.9.1.3 for N2 handover/AMF relocation;
-- TS 23.502 §4.23 for inter-PLMN/HR handover impacts and intermediate SMF/UPF
-  insertion/change/removal;
-- TS 29.518 for Namf_Communication;
-- TS 23.501 home-routed roaming architecture for V-SMF/V-UPF, H-SMF/H-UPF,
-  N9 and N32/SEPP.
+## Implemented procedure map
 
-## Current Open5GS baseline findings
+| Procedure element | Open5GS implementation |
+|---|---|
+| Source HandoverRequired | `src/amf/ngap-handler.c` detects a non-local target and retains TargetID/TAI/container |
+| Target-AMF discovery | NRF discovery option includes TAI/PLMN; `lib/sbi/context.c` matches AMF `taiList` / `taiRangeList` |
+| CreateUEContext client | `amf_namf_comm_build_create_ue_context()` + handover SBI transaction |
+| CreateUEContext server | `amf_namf_comm_handle_create_ue_context_request()` reconstructs target state |
+| Security transfer | KAMF + NH/NCC + NAS algorithms/counters transferred; target derives KNAS keys |
+| Target SMF preparation | Existing Nsmf UpdateSMContext path reused for inter-AMF handover |
+| Target HandoverRequest | Existing NGAP builder/path reused from target AMF |
+| HandoverRequestAck correlation | Pending CreateUEContext stream retained and completed after target-RAN preparation |
+| CreateUEContext 201 | Returns target-to-source container, session transfers and target UE-context Location |
+| Source HandoverCommand | Existing NGAP HandoverCommand path consumes returned transfer data |
+| RAN Status Transfer | S-AMF relays via Namf N1N2MessageTransfer class RAN; T-AMF emits DownlinkRANStatusTransfer |
+| HandoverNotify | Target AMF updates SMF with completed state and target NR location |
+| Source completion | T-AMF sends N2InfoNotify(HANDOVER_COMPLETED); S-AMF releases old NG/AMF context |
+| HandoverCancel | S-AMF sends ReleaseUEContext; T-AMF rolls back SMF/RAN state; source receives cancel ack |
+| Target failure | Target preparation failure completes CreateUEContext with failure and releases target state |
+| NTN location | NRNTNTAIInformation parsed/stored/copied and propagated to SMF; NR-CGI cell ID retains mapped-cell semantics |
 
-### Existing same-AMF handover path
+## Inter-AMF RAN Status Transfer
 
-`src/amf/ngap-handler.c::ngap_handle_handover_required()` currently parses:
+The execution phase must not use the same-AMF shortcut.
 
-- source RAN/AMF UE NGAP IDs;
-- HandoverType and Cause;
-- TargetID / target RAN node;
-- PDU Session Resource List;
-- Source-to-Target Transparent Container.
+Implemented sequence:
 
-It resolves the target gNB locally with `amf_gnb_find_by_gnb_id()`. If the target gNB is not attached to the same AMF, the procedure terminates with an error. This is the source-side split point for inter-AMF handover.
+```text
+S-gNB                   S-AMF                  T-AMF                 T-gNB
+  | Uplink RAN Status     |                      |                     |
+  |---------------------->|                      |                     |
+  |                       | N1N2MessageTransfer  |                     |
+  |                       | class=RAN            |                     |
+  |                       | RAN_STATUS_TRANS...  |                     |
+  |                       |--------------------->|                     |
+  |                       |                      | Downlink RAN Status |
+  |                       |                      |-------------------->|
+```
 
-For the same-AMF case it:
+The NGAP RANStatusTransfer transparent container is APER-encoded as a multipart
+binary part and decoded by the target AMF before reuse in NGAP.
 
-1. creates/associates a target `ran_ue_t`;
-2. stores the handover type/cause/container;
-3. sends `Nsmf_PDUSession_UpdateSMContext` with `HANDOVER_REQUIRED`;
-4. derives the next-hop security state;
-5. later handles `HandoverRequestAcknowledge` and the remaining same-AMF procedure.
+## NTN location map
 
-This code should be preserved as the local-target fast path.
+For every handled `UserLocationInformationNR`:
 
-### Namf_Communication CreateUEContext server seam already exists
+1. Decode ordinary NR-CGI/TAI.
+2. Inspect `iE-Extensions`.
+3. If `NRNTNTAIInformation` is present, retain:
+   - serving PLMN;
+   - TAC list in NR NTN;
+   - UE-location-derived TAC when present.
+4. Copy NTN state from RAN UE to AMF UE when associated.
+5. Include `NtnTaiInfo` in SMF NR location objects.
 
-Current Open5GS is further along than initially expected.
+`NR-CGI.nRCellIdentity` is the mapped-cell value in the NTN case; there is
+no additional Mapped Cell ID field in this NGAP location structure.
 
-`src/amf/amf-sm.c` recognizes the TS 29.518 Individual UE Context resource and routes:
+## Test map
 
-`PUT /namf-comm/v1/ue-contexts/{ueContextId}`
+### Unit tests
 
-to:
+- `tests/unit/sbi-message-test.c`
+  - bare CreateUEContext parsing;
+  - RAN-class N1N2MessageTransfer parsing.
+- `tests/unit/nrf-discovery-test.c`
+  - exact AMF TAI match;
+  - TAI mismatch rejection;
+  - TAI-range matching;
+  - OR matching across multiple `amfInfo` blocks.
 
-`amf_namf_comm_handle_create_ue_context_request()`.
+### Integration test
 
-`src/amf/namf-handler.c` already implements an initial CreateUEContext handler. It validates the presence of:
+Configuration: `configs/inter-amf-n2.yaml.in`
 
-- `ueContext`;
-- `targetId`;
-- `sourceToTargetData`;
-- a non-empty `pduSessionList`;
-- `n2NotifyUri`.
+Test: `tests/transfer/inter-amf-n2-handover-test.c`
 
-The handler then deliberately returns HTTP 501 because target-AMF state reconstruction and asynchronous completion after HandoverRequestAcknowledge are not implemented yet.
+Launcher: `tests/transfer/abts-inter-amf-n2-main.c`
 
-This is useful: M1 does not need a new Namf server route. The missing work starts after parsing/validation.
+Meson target: `inter-amf-n2`
 
-### Existing AMF-to-AMF registration context transfer
+The test starts two AMFs using the existing indexed test launcher:
 
-`src/amf/context.h` already contains context-transfer states for:
+- AMF-1 / TAC 1 / source gNB;
+- AMF-2 / TAC 2 / target gNB;
+- one shared SMF/UPF.
 
-- old/new-AMF UE context transfer;
-- old/new-AMF registration status update.
+It exercises registration, one PDU session, inter-AMF preparation, RAN status
+relay, HandoverNotify, source release, target N3 user-plane ping and target
+context cleanup.
 
-`src/amf/gmm-handler.c` detects a serving-AMF change from the 5G-GUTI during registration and invokes the existing Namf UEContextTransfer flow.
+## Source-layout cleanup
 
-This provides reusable patterns for AMF discovery, SBI transaction ownership, AMF UE context serialization, and old/new-AMF lifecycle handling.
+The temporary `ngap-handler-body.inc` and `nsmf-build-body.inc` macro
+interposition used during remote editing has been removed. The corresponding
+logic is directly in normal Open5GS C source files.
 
-## Current blockers found by code survey
+## Validation gate
 
-The success path is substantially implemented, but five items block the
-intended TN-NTN tests:
+As of this branch state there is **no successful build or runtime result**.
 
-1. **TAI-aware target-AMF selection** — the source supplies target TAI/PLMN in
-   discovery, but the NRF selection path does not reliably distinguish AMFs
-   by served TAI. Add NRF TAI matching or a deterministic lab override.
+- GitHub Actions: zero branch/PR workflow runs.
+- Connected remote build host: offline.
+- Local sandbox: cannot clone/download the repository.
 
-2. **Handover-complete notification to the source AMF** — the branch already
-   contains `amf_namf_callback_build_n2_info_notify()` with
-   `HANDOVER_COMPLETED`, but nothing invokes it from the target
-   `HandoverNotify` completion path. Without it, the old source-side context
-   is not released.
+The code is therefore at the **implemented + test-harness-ready** stage, not
+the validated/merge-ready stage.
 
-3. **Cancel/failure N14 rollback** — Handover Cancel and target preparation
-   failure still need inter-AMF state rollback and peer notification instead
-   of terminating locally with Error Indication.
+Required validation when an execution environment is available:
 
-4. **NTN location IEs** — ordinary NR-CGI/TAI are handled, but NR NTN TAI
-   Information and Mapped Cell ID are not yet retained/propagated for TN-NTN
-   mobility testing.
+1. Meson configure/build.
+2. Unit suites covering SBI + NRF changes.
+3. Focused `inter-amf-n2` integration test.
+4. Existing `transfer` and `handover` 5GC regression suites.
+5. Address compiler warnings/errors, sanitizer findings and runtime failures.
+6. Only then mark M2 complete.
 
-5. **Build/integration validation** — no CI run and no reproducible two-AMF
-   configuration/test exist yet.
+## M3 target
 
-## M1 missing pieces
+After M2 passes, implement the actual TN-NTN inter-PLMN HR topology:
 
-### Source AMF
+```text
+HPLMN                                           VPLMN
+H-SMF/H-UPF(PSA) <----------- N9 ----------- V-UPF/V-SMF
+       |                                           |
+     H-AMF <------ N14/Namf via N32/SEPP ------> V-AMF
+       |                                           |
+ source RAN                                  target TN/NTN RAN
+```
 
-1. In `ngap_handle_handover_required()`, distinguish:
-   - target gNB local to this AMF → existing same-AMF path;
-   - target gNB not local → inter-AMF path.
-
-2. Preserve the full target identity, including target PLMN/TAI, rather than reducing the decision to only a locally-known gNB ID.
-
-3. Select/discover the target AMF.
-
-4. Build and send `Namf_Communication_CreateUEContext`, including:
-   - UE/MM context required by TS 29.518;
-   - security context;
-   - TargetID;
-   - Source-to-Target Transparent Container;
-   - PDU-session list and N2 SM information;
-   - N2 notification URI.
-
-5. Hold source handover state while awaiting target-AMF completion.
-
-6. On successful CreateUEContext response, feed the returned target-to-source information into the existing source-gNB HandoverCommand path.
-
-### Target AMF
-
-1. Extend `amf_namf_comm_handle_create_ue_context_request()` beyond validation.
-
-2. Reconstruct a target `amf_ue_t` and required session context from the transferred UE context.
-
-3. Resolve the target gNB from TargetID.
-
-4. For each transferred PDU session, invoke the required SMF update for handover preparation.
-
-5. Build/send NGAP HandoverRequest to the target gNB.
-
-6. Persist an asynchronous CreateUEContext transaction context so the original SBI response can be completed only after NGAP HandoverRequestAcknowledge.
-
-7. On HandoverRequestAcknowledge:
-   - capture Target-to-Source Transparent Container;
-   - capture admitted/failed PDU-session information;
-   - finish the outstanding CreateUEContext response.
-
-8. Add failure and cleanup paths after the success path is stable.
-
-## Key implementation constraint
-
-The target-AMF CreateUEContext handler must not return success when it merely accepts the request. The successful CreateUEContext result depends on target-RAN handover preparation. The existing HTTP 501 behavior is therefore preferable to a premature 2xx response until the asynchronous state machine is implemented.
-
-## Planned increments
-
-- **M1**: same-PLMN/direct AMF-to-AMF success path, one PDU session.
-- **M2-A**: make target-AMF selection deterministic and TAI-aware.
-- **M2-B**: invoke Namf callback `HANDOVER_COMPLETED`, release source
-  AMF/RAN state, and complete execution-phase lifecycle.
-- **M2-C**: implement inter-AMF Handover Cancel / HandoverFailure rollback.
-- **M2-D**: preserve NTN-specific location IEs required by the TN-NTN test.
-- **M2-E**: add two-AMF/two-gNB configuration and integration test; run CI.
-- **M3**: inter-PLMN **home-routed** topology with H-SMF/H-UPF anchor,
-  V-SMF/V-UPF, N9, and vSEPP↔hSEPP over N32. Keep N14 as the AMF-relocation
-  control-plane procedure within this architecture.
-- **M4+**: multi-session partial success, forwarding variants, I-SMF/I-UPF
-  relocation variants, full inter-PLMN S-NSSAI mapping, policy relocation and
-  additional roaming cases.
-
-## Immediate next code-reading targets
-
-- `src/amf/ngap-handler.c`: exact same-AMF handover state and completion hooks.
-- `src/amf/ngap-build.c` / `ngap-path.c`: reusable HandoverRequest/HandoverCommand builders.
-- `src/amf/namf-build.c`: existing AMF-to-AMF request builders and serialization patterns.
-- `src/amf/sbi-path.c`: AMF discovery and SBI transaction ownership.
-- `src/amf/context.[ch]`: minimal state additions for a pending inter-AMF handover.
-- free5GC PR #165: reference for asynchronous CreateUEContext ↔ HandoverRequestAcknowledge correlation; procedure logic only, not a mechanical port.
-
+M3 must preserve the home PSA while introducing the visited SMF/UPF path and
+routing inter-PLMN SBI through the SEPPs.
