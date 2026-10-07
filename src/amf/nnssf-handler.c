@@ -130,6 +130,12 @@ int amf_nnssf_nsselection_handle_get(
         ogs_sbi_discovery_option_add_target_plmn_list(
                 discovery_option, &amf_ue->home_plmn_id);
 
+        if (sess->inter_plmn_handover.pending &&
+            sess->inter_plmn_handover.h_smf_id)
+            ogs_sbi_discovery_option_set_target_nf_instance_id(
+                    discovery_option,
+                    sess->inter_plmn_handover.h_smf_id);
+
         ogs_assert(ogs_local_conf()->num_of_serving_plmn_id);
         for (i = 0; i < ogs_local_conf()->num_of_serving_plmn_id; i++) {
             ogs_sbi_discovery_option_add_requester_plmn_list(
