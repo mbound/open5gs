@@ -655,25 +655,27 @@ bool smf_sbi_send_pdu_session_created_data(
 
     memset(&sendmsg, 0, sizeof(sendmsg));
 
-    n1SmBufToUe = gsmue_build_pdu_session_establishment_accept(sess);
-    if (!n1SmBufToUe) {
-        ogs_error("gsmue_build_pdu_session_establishment_accept() failed");
-        smf_sbi_send_pdu_session_create_error(stream,
-                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
-                OGS_5GSM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
-                "Invalid protocol configuration options", NULL, NULL);
-        goto end;
+    if (!INTER_PLMN_HANDOVER_PREP_IN_HSMF(sess)) {
+        n1SmBufToUe = gsmue_build_pdu_session_establishment_accept(sess);
+        if (!n1SmBufToUe) {
+            ogs_error("gsmue_build_pdu_session_establishment_accept() failed");
+            smf_sbi_send_pdu_session_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                    OGS_5GSM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
+                    "Invalid protocol configuration options", NULL, NULL);
+            goto end;
+        }
+
+        n1SmInfoToUe.content_id = (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
+        PduSessionCreatedData.n1_sm_info_to_ue = &n1SmInfoToUe;
+
+        sendmsg.part[sendmsg.num_of_part].pkbuf = n1SmBufToUe;
+        sendmsg.part[sendmsg.num_of_part].content_id =
+            (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
+        sendmsg.part[sendmsg.num_of_part].content_type =
+            (char *)OGS_SBI_CONTENT_5GNAS_TYPE;
+        sendmsg.num_of_part++;
     }
-
-    n1SmInfoToUe.content_id = (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
-    PduSessionCreatedData.n1_sm_info_to_ue = &n1SmInfoToUe;
-
-    sendmsg.part[sendmsg.num_of_part].pkbuf = n1SmBufToUe;
-    sendmsg.part[sendmsg.num_of_part].content_id =
-        (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
-    sendmsg.part[sendmsg.num_of_part].content_type =
-        (char *)OGS_SBI_CONTENT_5GNAS_TYPE;
-    sendmsg.num_of_part++;
 
     memset(&header, 0, sizeof(header));
     header.service.name =
