@@ -588,6 +588,48 @@ bool smf_nsmf_handle_create_sm_context(
     return true;
 }
 
+bool smf_nsmf_handle_retrieve_sm_context(
+    smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *message)
+{
+    OpenAPI_sm_context_retrieve_data_t *RetrieveData = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(stream);
+    ogs_assert(message);
+
+    RetrieveData = message->SmContextRetrieveData;
+    if (!RetrieveData) {
+        ogs_error("[%d] No SmContextRetrieveData", sess->psi);
+        ogs_assert(true == ogs_sbi_server_send_error(
+                stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST, message,
+                "No SmContextRetrieveData", NULL, NULL));
+        return false;
+    }
+
+    /*
+     * M3 implements the 5GS full-context form used for V-SMF insertion
+     * during N2 handover.  Reject EPS-PDN and AF-coordination retrieval
+     * explicitly rather than returning an incomplete object under the wrong
+     * semantic type.
+     */
+    if (RetrieveData->sm_context_type !=
+            OpenAPI_sm_context_type_SM_CONTEXT) {
+        ogs_error("[%d] Unsupported smContextType [%d]",
+                sess->psi, RetrieveData->sm_context_type);
+        ogs_assert(true == ogs_sbi_server_send_error(
+                stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST, message,
+                "Unsupported smContextType", NULL, NULL));
+        return false;
+    }
+
+    if (!smf_sbi_send_sm_context_retrieved_data(sess, stream)) {
+        ogs_error("[%d] Cannot send SmContextRetrievedData", sess->psi);
+        return false;
+    }
+
+    return true;
+}
+
 bool smf_nsmf_handle_update_sm_context(
     smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *message)
 {
