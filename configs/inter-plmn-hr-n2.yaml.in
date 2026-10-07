@@ -1,0 +1,355 @@
+db_uri: mongodb://localhost/open5gs
+
+logger:
+
+# M3 source-level integration topology.
+# HPLMN: 999-70, VPLMN: 001-01.
+#
+# Inter-PLMN SBI endpoints intentionally use 3GPP FQDNs. The test host must
+# resolve these names to the loopback addresses shown below (the existing
+# Open5GS roaming test/example environment uses the same convention).
+test:
+  serving:
+    - plmn_id:
+        mcc: 999
+        mnc: 70
+    - plmn_id:
+        mcc: 001
+        mnc: 01
+
+global:
+  parameter:
+    no_mme: true
+    no_sgwc: true
+    no_sgwu: true
+    no_pcrf: true
+    no_hss: true
+    no_bsf: true
+    no_udr: true
+
+# --------------------------------------------------------------------------
+# HPLMN 999-70
+# --------------------------------------------------------------------------
+nrf:
+  serving:
+    - plmn_id:
+        mcc: 999
+        mnc: 70
+  sbi:
+    server:
+      - address: nrf.5gc.mnc070.mcc999.3gppnetwork.org
+        port: 7777
+
+scp:
+  sbi:
+    server:
+      - address: 127.0.1.200
+        port: 7777
+    client:
+      nrf:
+        - uri: http://nrf.5gc.mnc070.mcc999.3gppnetwork.org:7777
+
+sepp:
+  default:
+    tls:
+      server:
+        private_key: @build_configs_dir@/open5gs/tls/sepp1.key
+        cert: @build_configs_dir@/open5gs/tls/sepp1.crt
+      client:
+        cacert: @build_configs_dir@/open5gs/tls/ca.crt
+  sbi:
+    server:
+      - address: 127.0.1.250
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.1.200:7777
+  n32:
+    server:
+      - sender: sepp1.localdomain
+        address: 127.0.1.251
+        port: 7777
+        n32f:
+          address: 127.0.1.252
+          port: 7777
+    client:
+      sepp:
+        - receiver: sepp2.localdomain
+          uri: http://127.0.2.251:7777
+          n32f:
+            uri: http://127.0.2.252:7777
+
+amf:
+  sbi:
+    server:
+      - address: amf.5gc.mnc070.mcc999.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.1.200:7777
+  ngap:
+    server:
+      - address: 127.0.1.5
+  guami:
+    - plmn_id:
+        mcc: 999
+        mnc: 70
+      amf_id:
+        region: 2
+        set: 1
+        pointer: 31
+  tai:
+    - plmn_id:
+        mcc: 999
+        mnc: 70
+      tac: 1
+  plmn_support:
+    - plmn_id:
+        mcc: 999
+        mnc: 70
+      s_nssai:
+        - sst: 1
+  security:
+    integrity_order: [ NIA2, NIA1, NIA0 ]
+    ciphering_order: [ NEA0, NEA1, NEA2 ]
+  network_name:
+    full: Open5GS-HPLMN
+  amf_name: open5gs-h-amf
+
+smf:
+  sbi:
+    server:
+      - address: smf.5gc.mnc070.mcc999.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.1.200:7777
+  pfcp:
+    server:
+      - address: 127.0.1.4
+    client:
+      upf:
+        - address: 127.0.1.7
+  gtpu:
+    server:
+      - address: 127.0.1.4
+  session:
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+    - subnet: 2001:db8:cafe::/48
+      gateway: 2001:db8:cafe::1
+  dns:
+    - 8.8.8.8
+    - 8.8.4.4
+  mtu: 1400
+
+upf:
+  pfcp:
+    server:
+      - address: 127.0.1.7
+  gtpu:
+    server:
+      - address: 127.0.1.7
+  session:
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+    - subnet: 2001:db8:cafe::/48
+      gateway: 2001:db8:cafe::1
+
+nssf:
+  sbi:
+    server:
+      - address: nssf.5gc.mnc070.mcc999.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.1.200:7777
+      nsi:
+        - uri: http://nrf.5gc.mnc070.mcc999.3gppnetwork.org:7777
+          s_nssai:
+            sst: 1
+
+ausf:
+  sbi:
+    server:
+      - address: ausf.5gc.mnc070.mcc999.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.1.200:7777
+
+udm:
+  hnet:
+    - id: 1
+      scheme: 1
+      key: @build_configs_dir@/open5gs/hnet/curve25519-1.key
+    - id: 2
+      scheme: 2
+      key: @build_configs_dir@/open5gs/hnet/secp256r1-2.key
+  sbi:
+    server:
+      - address: udm.5gc.mnc070.mcc999.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.1.200:7777
+
+pcf:
+  sbi:
+    server:
+      - address: pcf.5gc.mnc070.mcc999.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.1.200:7777
+  policy:
+    - supi_range:
+        - 999700000000001-999709999999999
+      slice:
+        - sst: 1
+          default_indicator: true
+          session:
+            - name: internet
+              type: 3
+              ambr:
+                downlink: { value: 1, unit: 3 }
+                uplink: { value: 1, unit: 3 }
+              qos:
+                index: 9
+                arp:
+                  priority_level: 8
+                  pre_emption_vulnerability: 1
+                  pre_emption_capability: 1
+
+# --------------------------------------------------------------------------
+# VPLMN 001-01
+# --------------------------------------------------------------------------
+nrf:
+  serving:
+    - plmn_id:
+        mcc: 001
+        mnc: 01
+  sbi:
+    server:
+      - address: nrf.5gc.mnc001.mcc001.3gppnetwork.org
+        port: 7777
+
+scp:
+  sbi:
+    server:
+      - address: 127.0.2.200
+        port: 7777
+    client:
+      nrf:
+        - uri: http://nrf.5gc.mnc001.mcc001.3gppnetwork.org:7777
+
+sepp:
+  default:
+    tls:
+      server:
+        private_key: @build_configs_dir@/open5gs/tls/sepp2.key
+        cert: @build_configs_dir@/open5gs/tls/sepp2.crt
+      client:
+        cacert: @build_configs_dir@/open5gs/tls/ca.crt
+  sbi:
+    server:
+      - address: 127.0.2.250
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.2.200:7777
+  n32:
+    server:
+      - sender: sepp2.localdomain
+        address: 127.0.2.251
+        port: 7777
+        n32f:
+          address: 127.0.2.252
+          port: 7777
+    client:
+      sepp:
+        - receiver: sepp1.localdomain
+          uri: http://127.0.1.251:7777
+          n32f:
+            uri: http://127.0.1.252:7777
+
+amf:
+  sbi:
+    server:
+      - address: amf.5gc.mnc001.mcc001.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.2.200:7777
+  ngap:
+    server:
+      - address: 127.0.2.5
+  access_control:
+    - plmn_id:
+        mcc: 999
+        mnc: 70
+  guami:
+    - plmn_id:
+        mcc: 001
+        mnc: 01
+      amf_id:
+        region: 2
+        set: 1
+        pointer: 30
+  tai:
+    - plmn_id:
+        mcc: 001
+        mnc: 01
+      tac: 2
+  plmn_support:
+    - plmn_id:
+        mcc: 001
+        mnc: 01
+      s_nssai:
+        - sst: 1
+  security:
+    integrity_order: [ NIA2, NIA1, NIA0 ]
+    ciphering_order: [ NEA0, NEA1, NEA2 ]
+  network_name:
+    full: Open5GS-VPLMN
+  amf_name: open5gs-v-amf
+
+smf:
+  sbi:
+    server:
+      - address: smf.5gc.mnc001.mcc001.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.2.200:7777
+  pfcp:
+    server:
+      - address: 127.0.2.4
+    client:
+      upf:
+        - address: 127.0.2.7
+  gtpu:
+    server:
+      - address: 127.0.2.4
+  mtu: 1400
+
+upf:
+  pfcp:
+    server:
+      - address: 127.0.2.7
+  gtpu:
+    server:
+      - address: 127.0.2.7
+
+nssf:
+  sbi:
+    server:
+      - address: nssf.5gc.mnc001.mcc001.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.2.200:7777
+      nsi:
+        - uri: http://nrf.5gc.mnc001.mcc001.3gppnetwork.org:7777
+          s_nssai:
+            sst: 1
