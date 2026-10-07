@@ -27,6 +27,8 @@
 extern "C" {
 #endif
 
+ogs_sbi_request_t *smf_nsmf_pdusession_build_retrieve_sm_context(
+        smf_sess_t *sess, void *data);
 ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
         smf_sess_t *sess, void *data);
 ogs_sbi_request_t *smf_nsmf_pdusession_build_hsmf_update_data(
