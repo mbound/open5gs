@@ -75,7 +75,9 @@ bool smf_sbi_send_request(
 #define SMF_UPDATE_STATE_DEACTIVATED                \
     (SMF_UPDATE_STATE_BASE + 0x06U)  /* 0x06 */
 #define SMF_UPDATE_STATE_UE_REQ_MOD                 \
-    (SMF_UPDATE_STATE_BASE + 0x07U)  /* 0x07 */
+    (SMF_UPDATE_STATE_BASE + 0x07U)  /* 0x27 */
+#define SMF_UPDATE_STATE_INTER_PLMN_HO_COMMIT        \
+    (SMF_UPDATE_STATE_BASE + 0x08U)  /* 0x28 */
 
 /* Base offset for SMF_REMOVE states */
 #define SMF_REMOVE_STATE_BASE       0x30U           /* REMOVE at 0x30 */
