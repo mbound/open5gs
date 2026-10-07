@@ -114,6 +114,9 @@ amf:
   network_name:
     full: Open5GS-HPLMN
   amf_name: open5gs-h-amf
+  time:
+    t3512:
+      value: 540     # 9 mintues * 60 = 540 seconds
 
 smf:
   sbi:
@@ -321,6 +324,9 @@ amf:
   network_name:
     full: Open5GS-VPLMN
   amf_name: open5gs-v-amf
+  time:
+    t3512:
+      value: 540     # 9 mintues * 60 = 540 seconds
 
 smf:
   sbi:
@@ -339,6 +345,14 @@ smf:
   gtpu:
     server:
       - address: 127.0.2.4
+  # Not used for the HR session (the H-SMF allocates the UE address);
+  # smf_context_validation() requires a subnet.
+  session:
+    - subnet: 10.46.0.0/16
+      gateway: 10.46.0.1
+  dns:
+    - 8.8.8.8
+    - 8.8.4.4
   mtu: 1400
 
 upf:
