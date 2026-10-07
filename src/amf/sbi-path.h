@@ -90,6 +90,7 @@ bool amf_sbi_send_request(
 #define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQ_ACK  63
 #define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_CANCEL   64
 #define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_FAILURE  65
+#define AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER          66
 
 /*
  * TS23.502
@@ -125,6 +126,9 @@ int amf_sess_sbi_discover_by_nsi(
         ran_ue_t *ran_ue, amf_sess_t *sess,
         OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option, int state);
+
+int amf_sbi_start_inter_plmn_handover(
+        ran_ue_t *ran_ue, amf_sess_t *sess);
 
 void amf_sbi_send_activating_session(
         ran_ue_t *ran_ue, amf_sess_t *sess, int state);
