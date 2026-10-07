@@ -1516,6 +1516,32 @@ bool smf_nsmf_handle_update_sm_context(
                 OpenAPI_ho_state_CANCELLED) {
             smf_bearer_t *qos_flow = NULL;
 
+            if (INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+                /*
+                 * HR relocation cancel: clear the H-SMF staged target path
+                 * before acknowledging the AMF. No V-CN tunnel is included,
+                 * which distinguishes cancel from execution at the H-SMF.
+                 */
+                memset(&sess->nsmf_param, 0, sizeof(sess->nsmf_param));
+                sess->nsmf_param.request_indication =
+                    OpenAPI_request_indication_PDU_SES_MOB;
+                sess->nsmf_param.ho_state = OpenAPI_ho_state_CANCELLED;
+
+                r = smf_sbi_discover_and_send(
+                        OpenAPI_service_name_nsmf_pdusession, NULL,
+                        smf_nsmf_pdusession_build_hsmf_update_data,
+                        sess, stream,
+                        SMF_UPDATE_STATE_INTER_PLMN_HO_CANCEL, NULL);
+                ogs_expect(r == OGS_OK);
+                if (r == OGS_ERROR) {
+                    smf_sbi_send_sm_context_update_error_log(
+                            stream, OGS_SBI_HTTP_STATUS_BAD_GATEWAY,
+                            "Cannot cancel H-SMF handover preparation", NULL);
+                    return false;
+                }
+                return true;
+            }
+
             sess->handover.prepared = false;
 
             ogs_list_for_each(&sess->bearer_list, qos_flow) {
