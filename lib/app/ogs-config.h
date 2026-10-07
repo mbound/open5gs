@@ -58,6 +58,10 @@ typedef struct ogs_global_conf_s {
         int no_scp;
         int no_nrf;
 
+        int nrf_count;
+        int scp_count;
+        int sepp_count;
+
         int amf_count;
         int smf_count;
         int upf_count;
