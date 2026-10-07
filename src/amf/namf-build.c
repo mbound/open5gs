@@ -20,7 +20,7 @@
 #include "namf-build.h"
 #include "nsmf-build.h"
 
-char *amf_namf_comm_base64_encode_ue_security_capability(
+static char *amf_namf_comm_base64_encode_ue_security_capability(
         ogs_nas_ue_security_capability_t ue_security_capability)
 {
     char *enc = NULL;

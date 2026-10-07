@@ -170,7 +170,7 @@ int amf_namf_comm_handle_create_ue_context_request(
     }
     if (!CreateData->pdu_session_list ||
         CreateData->pdu_session_list->count != 1) {
-        ogs_error("[%s] M1 requires exactly one PDU session [count:%d]",
+        ogs_error("[%s] M1 requires exactly one PDU session [count:%ld]",
                 ue_context_id,
                 CreateData->pdu_session_list ?
                     CreateData->pdu_session_list->count : 0);

@@ -21,6 +21,7 @@
 #include "ngap-path.h"
 #include "sbi-path.h"
 #include "namf-build.h"
+#include "namf-handler.h"
 #include "nas-path.h"
 
 static void ngap_store_nr_ntn_tai_information(
