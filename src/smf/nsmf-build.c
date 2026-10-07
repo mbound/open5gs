@@ -469,11 +469,13 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_hsmf_update_data(
     }
 
     if (sess->nsmf_param.request_indication ==
-            OpenAPI_request_indication_PDU_SES_MOB) {
+            OpenAPI_request_indication_PDU_SES_MOB &&
+        sess->nsmf_param.ho_state != OpenAPI_ho_state_CANCELLED) {
         /*
          * Inter-PLMN handover execution: advertise the target V-UPF N9
-         * endpoint selected during preparation.  This is the endpoint the
-         * retained H-UPF must use after the mobility commit.
+         * endpoint selected during preparation.  A relocation-cancel uses
+         * the same PDU_SES_MOB update with hoPreparationIndication=false,
+         * but deliberately omits V-CN tunnel information.
          */
         if (sess->local_dl_addr)
             vcnTunnelInfo.ipv4_addr =
