@@ -920,12 +920,6 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
         return OGS_ERROR;
     }
 
-    if (N1N2MessageTransferReqData->is_pdu_session_id == false) {
-        ogs_error("No PDU Session Identity");
-        return OGS_ERROR;
-    }
-    pdu_session_id = N1N2MessageTransferReqData->pdu_session_id;
-
     supi = recvmsg->h.resource.component[1];
     if (!supi) {
         ogs_error("No SUPI");
@@ -937,6 +931,100 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
         ogs_error("No UE context [%s]", supi);
         return OGS_ERROR;
     }
+
+    /*
+     * TS 23.502 4.9.1.3.3 inter-AMF execution phase:
+     * RAN Status Transfer is AMF/RAN information, not PDU-session SM
+     * information. Handle it before the legacy SM-specific PSI checks.
+     */
+    n2InfoContainer = N1N2MessageTransferReqData->n2_info_container;
+    if (n2InfoContainer &&
+        n2InfoContainer->n2_information_class ==
+            OpenAPI_n2_information_class_RAN) {
+        OpenAPI_n2_ran_information_t *ranInfo = n2InfoContainer->ran_info;
+        NGAP_RANStatusTransfer_TransparentContainer_t transfer;
+        ogs_pkbuf_t *ranbuf = NULL;
+
+        if (!amf_ue->handover.inter_amf_target) {
+            ogs_error("[%s] RAN status relay received outside target "
+                    "inter-AMF handover", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        if (!ranInfo || !ranInfo->n2_info_content) {
+            ogs_error("[%s] No RAN N2 information content", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        n2InfoContent = ranInfo->n2_info_content;
+        if (n2InfoContent->ngap_ie_type !=
+                OpenAPI_ngap_ie_type_RAN_STATUS_TRANS_CONTAINER) {
+            ogs_error("[%s] Unsupported RAN N2 IE type [%d]",
+                    amf_ue->supi, n2InfoContent->ngap_ie_type);
+            return OGS_ERROR;
+        }
+
+        ngapData = n2InfoContent->ngap_data;
+        if (!ngapData || !ngapData->content_id) {
+            ogs_error("[%s] No RAN status NGAP data reference", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        ranbuf = ogs_sbi_find_part_by_content_id(
+                recvmsg, ngapData->content_id);
+        if (!ranbuf) {
+            ogs_error("[%s] No RAN status binary part", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        ran_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+        if (!ran_ue) {
+            ogs_error("[%s] Target NG context has been removed", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        memset(&transfer, 0, sizeof(transfer));
+        r = ogs_asn_decode(
+                &asn_DEF_NGAP_RANStatusTransfer_TransparentContainer,
+                &transfer, sizeof(transfer), ranbuf);
+        if (r != OGS_OK) {
+            ogs_error("[%s] Cannot decode RAN status transfer container",
+                    amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        r = ngap_send_downlink_ran_status_transfer(ran_ue, &transfer);
+        ogs_asn_free(
+                &asn_DEF_NGAP_RANStatusTransfer_TransparentContainer,
+                &transfer);
+        if (r != OGS_OK) {
+            ogs_error("[%s] Cannot send DownlinkRANStatusTransfer [error:%d]",
+                    amf_ue->supi, r);
+            return r;
+        }
+
+        memset(&sendmsg, 0, sizeof(sendmsg));
+        memset(&N1N2MessageTransferRspData, 0,
+                sizeof(N1N2MessageTransferRspData));
+        N1N2MessageTransferRspData.cause =
+            OpenAPI_n1_n2_message_transfer_cause_N1_N2_TRANSFER_INITIATED;
+        sendmsg.N1N2MessageTransferRspData = &N1N2MessageTransferRspData;
+
+        response = ogs_sbi_build_response(
+                &sendmsg, OGS_SBI_HTTP_STATUS_OK);
+        ogs_assert(response);
+        ogs_assert(true == ogs_sbi_server_send_response(stream, response));
+
+        ogs_info("[%s] Relayed inter-AMF RAN status transfer to target gNB",
+                amf_ue->supi);
+        return OGS_OK;
+    }
+
+    if (N1N2MessageTransferReqData->is_pdu_session_id == false) {
+        ogs_error("No PDU Session Identity");
+        return OGS_ERROR;
+    }
+    pdu_session_id = N1N2MessageTransferReqData->pdu_session_id;
 
     sess = amf_sess_find_by_psi(amf_ue, pdu_session_id);
     if (!sess) {
