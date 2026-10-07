@@ -1876,6 +1876,22 @@ smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message)
 
     sess = smf_sess_find_by_psi(smf_ue, PduSessionCreateData->pdu_session_id);
     if (sess) {
+        /*
+         * During inter-PLMN N2 handover with V-SMF insertion/change the
+         * PDU Session Create is a preparation request for the existing
+         * anchor session.  Reusing the H-SMF session is the entire point:
+         * removing it here would tear down the PSA/H-UPF anchor that the
+         * handover is required to preserve.
+         */
+        if (PduSessionCreateData->is_ho_preparation_indication &&
+            PduSessionCreateData->ho_preparation_indication) {
+            ogs_info("Reuse anchor session for handover preparation "
+                    "[SUPI:%s,PDU Session identity:%d]",
+                    PduSessionCreateData->supi,
+                    PduSessionCreateData->pdu_session_id);
+            return sess;
+        }
+
         ogs_warn("OLD Session Will Release [SUPI:%s,PDU Session identity:%d]",
                 PduSessionCreateData->supi,
                 PduSessionCreateData->pdu_session_id);
