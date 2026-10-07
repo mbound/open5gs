@@ -224,7 +224,7 @@ static void inter_amf_n2_handover_func(abts_case *tc, void *data)
     rv = testgnb_ngap_send(ngap1, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
-        /* Target AMF serves TAC 2 in the same PLMN. */
+    /* Target AMF serves TAC 2 in the same PLMN. */
     target_tai = test_ue->nr_tai;
     target_tai.tac.v = 2;
 
@@ -234,7 +234,7 @@ static void inter_amf_n2_handover_func(abts_case *tc, void *data)
             0x4001, 28, &target_tai,
             NGAP_Cause_PR_radioNetwork,
             NGAP_CauseRadioNetwork_handover_desirable_for_radio_reason,
-            false);
+            true);
     ABTS_PTR_NOTNULL(tc, sendbuf);
     rv = testgnb_ngap_send(ngap1, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
