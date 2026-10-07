@@ -34,7 +34,14 @@ static ogs_pkbuf_t *testngap_build_handover_required_transfer(
 static ogs_pkbuf_t *testngap_build_handover_request_ack_transfer(
         test_sess_t *sess);
 
-ogs_pkbuf_t *testngap_build_ng_setup_request(uint32_t gnb_id, uint8_t bitsize)
+ogs_pkbuf_t *testngap_build_ng_setup_request(
+        uint32_t gnb_id, uint8_t bitsize)
+{
+    return testngap_build_ng_setup_request_by_tai(gnb_id, bitsize, 0);
+}
+
+ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai(
+        uint32_t gnb_id, uint8_t bitsize, int tai_index)
 {
     ogs_pkbuf_t *pkbuf = NULL;
     int i, j, k, num = 0;
@@ -139,10 +146,10 @@ ogs_pkbuf_t *testngap_build_ng_setup_request(uint32_t gnb_id, uint8_t bitsize)
     ogs_asn_buffer_to_OCTET_STRING((char*)ran_node_name,
             strlen(ran_node_name), RANNodeName);
 
-    if (test_self()->nr_served_tai[0].list2.num)
-        num = test_self()->nr_served_tai[0].list2.num;
-    else if (test_self()->nr_served_tai[0].list0.tai[0].num)
-        num = test_self()->nr_served_tai[0].list0.tai[0].num;
+    if (test_self()->nr_served_tai[tai_index].list2.num)
+        num = test_self()->nr_served_tai[tai_index].list2.num;
+    else if (test_self()->nr_served_tai[tai_index].list0.tai[0].num)
+        num = test_self()->nr_served_tai[tai_index].list0.tai[0].num;
     else
         ogs_assert_if_reached();
 
@@ -153,13 +160,13 @@ ogs_pkbuf_t *testngap_build_ng_setup_request(uint32_t gnb_id, uint8_t bitsize)
             CALLOC(1, sizeof(*SupportedTAItem->broadcastPLMNList));
         ogs_assert(SupportedTAItem->broadcastPLMNList);
 
-        if (test_self()->nr_served_tai[0].list2.num)
+        if (test_self()->nr_served_tai[tai_index].list2.num)
             ogs_asn_uint24_to_OCTET_STRING(
-                test_self()->nr_served_tai[0].list2.tai[i].tac,
+                test_self()->nr_served_tai[tai_index].list2.tai[i].tac,
                 &SupportedTAItem->tAC);
-        else if (test_self()->nr_served_tai[0].list0.tai[0].num)
+        else if (test_self()->nr_served_tai[tai_index].list0.tai[0].num)
             ogs_asn_uint24_to_OCTET_STRING(
-                test_self()->nr_served_tai[0].list0.tai[0].tac[i],
+                test_self()->nr_served_tai[tai_index].list0.tai[0].tac[i],
                     &SupportedTAItem->tAC);
         else
             ogs_assert_if_reached();
@@ -2052,6 +2059,17 @@ ogs_pkbuf_t *testngap_build_handover_required(
         NGAP_Cause_PR group, long cause,
         bool direct)
 {
+    return testngap_build_handover_required_to_tai(
+            test_ue, handover_type, gnb_id, bitsize, &test_ue->nr_tai,
+            group, cause, direct);
+}
+
+ogs_pkbuf_t *testngap_build_handover_required_to_tai(
+        test_ue_t *test_ue, NGAP_HandoverType_t handover_type,
+        uint32_t gnb_id, uint8_t bitsize, ogs_5gs_tai_t *target_tai,
+        NGAP_Cause_PR group, long cause,
+        bool direct)
+{
     test_sess_t *sess = NULL;
 
     ogs_pkbuf_t *n2smbuf = NULL;
@@ -2198,7 +2216,8 @@ ogs_pkbuf_t *testngap_build_handover_required(
     selectedTAI = CALLOC(1, sizeof(*selectedTAI));
     ogs_assert(selectedTAI);
     targetRANNodeID->selectedTAI = selectedTAI;
-    ogs_ngap_5gs_tai_to_ASN(&test_ue->nr_tai, selectedTAI);
+    ogs_assert(target_tai);
+    ogs_ngap_5gs_tai_to_ASN(target_tai, selectedTAI);
 
     ogs_list_for_each(&test_ue->sess_list, sess) {
         if (!PDUSessionList) {
