@@ -348,6 +348,13 @@ upf:
   gtpu:
     server:
       - address: 127.0.2.7
+  # The V-SMF has no UE pool (HR: H-SMF allocates the address), but the UPF
+  # requires a session subnet and its own TUN device; values follow
+  # configs/examples/5gc-sepp2-001-01.yaml.in.
+  session:
+    - subnet: 10.46.0.0/16
+      gateway: 10.46.0.1
+      dev: ogstun2
 
 nssf:
   sbi:
