@@ -1996,6 +1996,24 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                     smf_ue->supi, sess->psi,
                                     sbi_message->res_status);
                             OGS_FSM_TRAN(s, smf_gsm_state_exception);
+                        } else if (e->h.sbi.state ==
+                                SMF_CREATE_STATE_INTER_PLMN_HANDOVER &&
+                                INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+                            /*
+                             * H-SMF preparation succeeded. The target V-SMF
+                             * owns the target N3/V-UPF leg, so it generates
+                             * the N2 resource setup transfer returned to the
+                             * target AMF.
+                             */
+                            n2smbuf =
+                                ngap_build_pdu_session_resource_setup_request_transfer(
+                                        sess);
+                            ogs_assert(n2smbuf);
+
+                            sess->up_cnx_state =
+                                OpenAPI_up_cnx_state_ACTIVATING;
+                            smf_sbi_send_inter_plmn_handover_sm_context_created(
+                                    sess, stream, n2smbuf);
                         }
                     END
                     break;
