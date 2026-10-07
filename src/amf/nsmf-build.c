@@ -277,7 +277,19 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
             h_smf_instance = OGS_SBI_GET_NF_INSTANCE(
                     sess->sbi.home_nsmf_pdusession);
             ogs_assert(h_smf_instance);
-            h_smf_client = NF_INSTANCE_CLIENT(h_smf_instance);
+            /*
+             * Prefer the nsmf-pdusession service endpoint: the NF-level
+             * client of an FQDN-addressed H-SMF has no port (NFProfile
+             * carries none) and falls back to 80, while the NFService
+             * ipEndPoints carry the real port.
+             */
+            h_smf_client = ogs_sbi_client_find_by_service_name(
+                    h_smf_instance,
+                    (char *)OpenAPI_service_name_ToString(
+                        OpenAPI_service_name_nsmf_pdusession),
+                    (char *)OGS_SBI_API_V1);
+            if (!h_smf_client)
+                h_smf_client = NF_INSTANCE_CLIENT(h_smf_instance);
             ogs_assert(h_smf_client);
 
             SmContextCreateData.h_smf_id = h_smf_instance->id;
