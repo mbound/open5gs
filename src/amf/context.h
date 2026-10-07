@@ -860,6 +860,7 @@ typedef struct amf_sess_s {
         char *h_smf_id;
         char *v_smf_id;
         ogs_pkbuf_t *handover_required;
+        OpenAPI_ng_ran_target_id_t *target_id;
     } inter_plmn_handover;
 
     bool pdu_session_release_complete_received;
