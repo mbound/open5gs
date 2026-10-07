@@ -43,10 +43,19 @@ ogs_pkbuf_t *testngap_build_ng_setup_request(
 ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai(
         uint32_t gnb_id, uint8_t bitsize, int tai_index)
 {
+    return testngap_build_ng_setup_request_by_tai_plmn(
+            gnb_id, bitsize, tai_index, 0);
+}
+
+ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai_plmn(
+        uint32_t gnb_id, uint8_t bitsize, int tai_index, int plmn_index)
+{
     ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_assert(tai_index >= 0);
     ogs_assert(tai_index < test_self()->num_of_nr_served_tai);
+    ogs_assert(plmn_index >= 0);
+    ogs_assert(plmn_index < test_self()->num_of_plmn_support);
     int i, j, k, num = 0;
     ogs_plmn_id_t *plmn_id = NULL;
     const char *ran_node_name = "5G gNB-CU";
@@ -87,7 +96,7 @@ ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai(
     globalGNB_ID = CALLOC(1, sizeof(*globalGNB_ID));
     ogs_assert(globalGNB_ID);
 
-    plmn_id = &test_self()->plmn_support[0].plmn_id;
+    plmn_id = &test_self()->plmn_support[plmn_index].plmn_id;
     ogs_asn_buffer_to_OCTET_STRING(
             plmn_id, OGS_PLMN_ID_LEN, &globalGNB_ID->pLMNIdentity);
 
@@ -2208,7 +2217,7 @@ ogs_pkbuf_t *testngap_build_handover_required_to_tai(
         CALLOC(1, sizeof(*globalGNB_ID));
     ogs_assert(globalGNB_ID);
 
-    plmn_id = &test_self()->plmn_support[0].plmn_id;
+    plmn_id = &target_tai->plmn_id;
     ogs_asn_buffer_to_OCTET_STRING(
             plmn_id, OGS_PLMN_ID_LEN, &globalGNB_ID->pLMNIdentity);
 
