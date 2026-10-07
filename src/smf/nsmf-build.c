@@ -176,6 +176,18 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
             OpenAPI_request_type_EXISTING_EMERGENCY_PDU_SESSION)
         PduSessionCreateData.request_type = sess->request_type;
 
+    if (INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+        /*
+         * TS 29.502 N2 handover preparation with V-SMF insertion/change:
+         * this is an existing PDU session and the H-SMF must preserve the
+         * current DL path until handover execution.
+         */
+        PduSessionCreateData.request_type =
+            OpenAPI_request_type_EXISTING_PDU_SESSION;
+        PduSessionCreateData.is_ho_preparation_indication = true;
+        PduSessionCreateData.ho_preparation_indication = true;
+    }
+
     header.service.name =
         OpenAPI_service_name_ToString(OpenAPI_service_name_nsmf_pdusession);
     header.api.version = (char *)OGS_SBI_API_V1;
@@ -253,8 +265,9 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
         goto end;
     }
 
-    ogs_assert(sess->n1SmBufFromUe);
-    rv = ogs_nas_5gsm_decode(&nas_message, sess->n1SmBufFromUe);
+    if (!INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+        ogs_assert(sess->n1SmBufFromUe);
+        rv = ogs_nas_5gsm_decode(&nas_message, sess->n1SmBufFromUe);
 
     if (rv == OGS_OK) {
         n1SmBufFromUe = gsmue_encode_n1_sm_info(&nas_message);
@@ -322,6 +335,8 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
     } else {
         ogs_error("ogs_nas_5gsm_decode() failed [%d]", rv);
         ogs_log_hexdump(OGS_LOG_ERROR, sess->n1SmBufFromUe->data, sess->n1SmBufFromUe->len);
+    }
+
     }
 
     message.PduSessionCreateData = &PduSessionCreateData;
