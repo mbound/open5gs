@@ -44,6 +44,9 @@ ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai(
         uint32_t gnb_id, uint8_t bitsize, int tai_index)
 {
     ogs_pkbuf_t *pkbuf = NULL;
+
+    ogs_assert(tai_index >= 0);
+    ogs_assert(tai_index < test_self()->num_of_nr_served_tai);
     int i, j, k, num = 0;
     ogs_plmn_id_t *plmn_id = NULL;
     const char *ran_node_name = "5G gNB-CU";
