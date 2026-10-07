@@ -730,7 +730,13 @@ int amf_sbi_start_inter_plmn_handover(
     param.slice_info_for_pdu_session.snssai = &sess->s_nssai;
     param.slice_info_for_pdu_session.roaming_indication =
         OpenAPI_roaming_indication_HOME_ROUTED_ROAMING;
-    param.slice_info_for_pdu_session.home_snssai = &sess->s_nssai;
+    /*
+     * No homeSnssai here: like the VPLMN step of PDU session establishment
+     * (gmm-handler.c), this query must return the serving-PLMN NRF for the
+     * V-SMF. With home-plmn-id + home-snssai the NSSF answers with the
+     * HPLMN NSI/NRF (src/nssf/nnssf-handler.c), which is only asked for in
+     * the AMF_SMF_SELECTION_IN_HPLMN_IN_HOME_ROUTED step.
+     */
     param.home_plmn_id = &amf_ue->home_plmn_id;
     param.tai = &amf_ue->nr_tai;
 
