@@ -663,6 +663,21 @@ typedef struct smf_sess_s {
         ogs_pkbuf_t *handover_required;
     } inter_plmn_handover;
 
+    /*
+     * H-SMF side of inter-PLMN handover preparation.  Keep the currently
+     * active V-CN/downlink path untouched until execution; the target V-SMF
+     * N9 endpoint is staged here.
+     */
+#define INTER_PLMN_HANDOVER_PREP_IN_HSMF(__sESS) \
+    ((__sESS) && (__sESS)->hsmf_handover.pending)
+    struct {
+        bool pending;
+        ogs_ip_t target_vcn_ip;
+        uint32_t target_vcn_teid;
+        char *target_vsmf_id;
+        char *target_vsmf_pdu_session_uri;
+    } hsmf_handover;
+
     /* Handover */
     struct {
         bool prepared;
