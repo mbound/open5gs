@@ -332,6 +332,87 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
     ABTS_PTR_NOTNULL(tc, recvbuf);
     ogs_pkbuf_free(recvbuf);
 
+    /*
+     * Optional (TEST_HR_MRU set): Mobility Registration Update at the target
+     * V-AMF after the handover into the new TA (TS 23.502 4.9.1.3.3 step 12,
+     * TS 24.501 5.5.1.3). The V-AMF then creates the AM policy association
+     * with a V-PCF, which configs/inter-plmn-hr-n2.yaml does not have, so
+     * the meson suite leaves it off; docker/inter-plmn-hr turns it on.
+     */
+    if (getenv("TEST_HR_MRU")) {
+        test_ue->nas.registration.value =
+            OGS_NAS_5GS_REGISTRATION_TYPE_MOBILITY_UPDATING;
+        memset(&test_ue->registration_request_param, 0,
+                sizeof(test_ue->registration_request_param));
+        test_ue->registration_request_param.guti = 1;
+        /* plain copy for the NAS message container of SMC complete */
+        nasbuf = testgmm_build_registration_request(
+                test_ue, NULL, false, false);
+        ABTS_PTR_NOTNULL(tc, nasbuf);
+        gmmbuf = testgmm_build_registration_request(
+                test_ue, NULL, true, true);
+        ABTS_PTR_NOTNULL(tc, gmmbuf);
+        sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+        ABTS_PTR_NOTNULL(tc, sendbuf);
+        rv = testgnb_ngap_send(ngap2, sendbuf);
+        ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+        /*
+         * The V-AMF got the SUPI but no SUCI with the UE context (N14), so
+         * it may ask for the identity and re-authenticate the UE (TS 23.502
+         * 4.2.2.2.2 steps 8-9) before the Registration accept.
+         */
+        for (;;) {
+            recvbuf = testgnb_ngap_read(ngap2);
+            ABTS_PTR_NOTNULL(tc, recvbuf);
+            testngap_recv(test_ue, recvbuf);
+
+            if (test_ue->gmm_message_type == OGS_NAS_5GS_IDENTITY_REQUEST)
+                gmmbuf = testgmm_build_identity_response(test_ue);
+            else if (test_ue->gmm_message_type ==
+                    OGS_NAS_5GS_AUTHENTICATION_REQUEST)
+                gmmbuf = testgmm_build_authentication_response(test_ue);
+            else if (test_ue->gmm_message_type ==
+                    OGS_NAS_5GS_SECURITY_MODE_COMMAND)
+                gmmbuf = testgmm_build_security_mode_complete(
+                        test_ue, nasbuf);
+            else
+                break;
+
+            ABTS_PTR_NOTNULL(tc, gmmbuf);
+            sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+            ABTS_PTR_NOTNULL(tc, sendbuf);
+            rv = testgnb_ngap_send(ngap2, sendbuf);
+            ABTS_INT_EQUAL(tc, OGS_OK, rv);
+        }
+
+        /* Receive Registration accept */
+        ABTS_INT_EQUAL(tc, OGS_NAS_5GS_REGISTRATION_ACCEPT,
+                test_ue->gmm_message_type);
+
+        /* Send Registration complete */
+        gmmbuf = testgmm_build_registration_complete(test_ue);
+        ABTS_PTR_NOTNULL(tc, gmmbuf);
+        sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+        ABTS_PTR_NOTNULL(tc, sendbuf);
+        rv = testgnb_ngap_send(ngap2, sendbuf);
+        ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+        /* Receive Configuration update command */
+        recvbuf = testgnb_ngap_read(ngap2);
+        ABTS_PTR_NOTNULL(tc, recvbuf);
+        testngap_recv(test_ue, recvbuf);
+        ABTS_INT_EQUAL(tc, OGS_NAS_5GS_CONFIGURATION_UPDATE_COMMAND,
+                test_ue->gmm_message_type);
+
+        /* The home path still carries traffic */
+        rv = test_gtpu_send_ping(gtpu2, qos_flow, TEST_PING_IPV4);
+        ABTS_INT_EQUAL(tc, OGS_OK, rv);
+        recvbuf = testgnb_gtpu_read(gtpu2);
+        ABTS_PTR_NOTNULL(tc, recvbuf);
+        ogs_pkbuf_free(recvbuf);
+    }
+
     /* Release the target-AMF NG context cleanly. */
     sendbuf = testngap_build_ue_context_release_request(test_ue,
             NGAP_Cause_PR_radioNetwork,
