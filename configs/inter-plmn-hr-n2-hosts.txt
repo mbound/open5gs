@@ -1,0 +1,15 @@
+# /etc/hosts entries for configs/inter-plmn-hr-n2.yaml
+# HPLMN 999-70
+127.0.1.10 nrf.5gc.mnc070.mcc999.3gppnetwork.org
+127.0.1.5  amf.5gc.mnc070.mcc999.3gppnetwork.org
+127.0.1.4  smf.5gc.mnc070.mcc999.3gppnetwork.org
+127.0.1.11 ausf.5gc.mnc070.mcc999.3gppnetwork.org
+127.0.1.12 udm.5gc.mnc070.mcc999.3gppnetwork.org
+127.0.1.13 pcf.5gc.mnc070.mcc999.3gppnetwork.org
+127.0.1.14 nssf.5gc.mnc070.mcc999.3gppnetwork.org
+
+# VPLMN 001-01
+127.0.2.10 nrf.5gc.mnc001.mcc001.3gppnetwork.org
+127.0.2.5  amf.5gc.mnc001.mcc001.3gppnetwork.org
+127.0.2.4  smf.5gc.mnc001.mcc001.3gppnetwork.org
+127.0.2.14 nssf.5gc.mnc001.mcc001.3gppnetwork.org
