@@ -1,5 +1,6 @@
 ARG dist=ubuntu
 ARG tag=latest
+FROM mongo:7 AS mongo
 FROM ${dist}:${tag}
 
 LABEL org.opencontainers.image.authors="Sukchan Lee <acetcom@gmail.com>"
@@ -32,6 +33,9 @@ RUN apt-get update && \
         libtalloc-dev \
         libc-ares-dev \
         iproute2 \
+        iputils-ping \
+        tcpdump \
+        procps \
         ca-certificates \
         netbase \
         pkg-config && \
@@ -41,3 +45,6 @@ RUN apt-get update && \
         apt-get install -y --no-install-recommends libidn11-dev; \
     fi && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# mongosh for misc/db/open5gs-dbctl (subscriber provisioning)
+COPY --from=mongo /usr/bin/mongosh /usr/bin/mongosh

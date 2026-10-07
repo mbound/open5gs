@@ -12,4 +12,6 @@ COPY ./ /open5gs
 ADD https://github.com/ufoscout/docker-compose-wait/releases/download/2.9.0/wait /wait
 RUN chmod +x /wait
 
-RUN meson build && ninja -C build install
+# NINJA_JOBS caps build parallelism on shared hosts (default: ninja's own)
+ARG NINJA_JOBS=
+RUN meson build && ninja -C build ${NINJA_JOBS:+-j$NINJA_JOBS} install
