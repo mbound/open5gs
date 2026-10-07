@@ -119,6 +119,7 @@ extern "C" {
 #define OGS_SBI_RESOURCE_NAME_SM_CONTEXTS           "sm-contexts"
 #define OGS_SBI_RESOURCE_NAME_MODIFY                "modify"
 #define OGS_SBI_RESOURCE_NAME_RELEASE               "release"
+#define OGS_SBI_RESOURCE_NAME_RETRIEVE              "retrieve"
 
 #define OGS_SBI_RESOURCE_NAME_PDU_SESSIONS          "pdu-sessions"
 #define OGS_SBI_RESOURCE_NAME_VSMF_PDU_SESSIONS     "vsmf-pdu-session"
@@ -577,6 +578,8 @@ typedef struct ogs_sbi_message_s {
     OpenAPI_sm_context_update_error_t *SmContextUpdateError;
     OpenAPI_sm_context_release_data_t *SmContextReleaseData;
     OpenAPI_sm_context_released_data_t *SmContextReleasedData;
+    OpenAPI_sm_context_retrieve_data_t *SmContextRetrieveData;
+    OpenAPI_sm_context_retrieved_data_t *SmContextRetrievedData;
     OpenAPI_pdu_session_create_data_t *PduSessionCreateData;
     OpenAPI_pdu_session_created_data_t *PduSessionCreatedData;
     OpenAPI_pdu_session_create_error_t *PduSessionCreateError;
