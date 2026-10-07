@@ -2746,6 +2746,7 @@ bool smf_nsmf_handle_update_data_in_hsmf(
     ogs_assert(smf_ue);
 
     memset(&sess->nsmf_param, 0, sizeof(sess->nsmf_param));
+    memset(&nas_message, 0, sizeof(nas_message));
 
     HsmfUpdateData = message->HsmfUpdateData;
     if (!HsmfUpdateData) {
