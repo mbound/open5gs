@@ -29,6 +29,8 @@ bool smf_nsmf_handle_create_sm_context(
     smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *message)
 {
     bool rc;
+    bool inter_plmn_handover = false;
+    int r;
     smf_ue_t *smf_ue = NULL;
     smf_bearer_t *qos_flow = NULL;
     ogs_pfcp_pdr_t *dl_pdr = NULL;
@@ -50,6 +52,8 @@ bool smf_nsmf_handle_create_sm_context(
     OpenAPI_snssai_t *sNssai = NULL;
     OpenAPI_plmn_id_nid_t *servingNetwork = NULL;
     OpenAPI_ref_to_binary_data_t *n1SmMsg = NULL;
+    OpenAPI_ref_to_binary_data_t *n2SmInfo = NULL;
+    ogs_pkbuf_t *n2smbuf = NULL;
 
     ogs_assert(stream);
     ogs_assert(message);
@@ -68,45 +72,88 @@ bool smf_nsmf_handle_create_sm_context(
         return false;
     }
 
-    n1SmMsg = SmContextCreateData->n1_sm_msg;
-    if (!n1SmMsg || !n1SmMsg->content_id) {
-        ogs_error("[%s:%d] No n1SmMsg", smf_ue->supi, sess->psi);
-        smf_sbi_send_sm_context_create_error(stream,
-                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
-                "No n1SmMsg", smf_ue->supi, NULL);
-        return false;
-    }
+    /*
+     * A target V-SMF insertion/change during inter-PLMN N2 handover carries
+     * an existing source SM context and HandoverRequired N2 SM information,
+     * not a new PDU Session Establishment Request in N1.
+     */
+    inter_plmn_handover =
+        SmContextCreateData->sm_context_ref &&
+        SmContextCreateData->sm_context_smf_id &&
+        SmContextCreateData->sm_context_smf_plmn_id &&
+        SmContextCreateData->ho_state == OpenAPI_ho_state_PREPARING &&
+        SmContextCreateData->target_id &&
+        SmContextCreateData->n2_sm_info &&
+        SmContextCreateData->n2_sm_info_type ==
+            OpenAPI_n2_sm_info_type_HANDOVER_REQUIRED;
 
-    n1smbuf = ogs_sbi_find_part_by_content_id(message, n1SmMsg->content_id);
-    if (!n1smbuf) {
-        ogs_error("[%s:%d] No N1 SM Content [%s]",
-                smf_ue->supi, sess->psi, n1SmMsg->content_id);
-        smf_sbi_send_sm_context_create_error(stream,
-                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
-                "No N1 SM Content", smf_ue->supi, NULL);
-        return false;
-    }
+    if (inter_plmn_handover) {
+        n2SmInfo = SmContextCreateData->n2_sm_info;
+        if (!n2SmInfo->content_id) {
+            ogs_error("[%s:%d] No HandoverRequired content-id",
+                    smf_ue->supi, sess->psi);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    "No HandoverRequired content-id", smf_ue->supi, NULL);
+            return false;
+        }
 
-    if (n1smbuf->len < sizeof(ogs_nas_5gsm_header_t)) {
-        ogs_error("[%s:%d] N1 SM Content too short [%d]",
-                smf_ue->supi, sess->psi, n1smbuf->len);
-        smf_sbi_send_sm_context_create_error(stream,
-                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
-                "N1 SM Content too short", smf_ue->supi, NULL);
-        return false;
-    }
+        n2smbuf = ogs_sbi_find_part_by_content_id(
+                message, n2SmInfo->content_id);
+        if (!n2smbuf) {
+            ogs_error("[%s:%d] No HandoverRequired N2 SM Content [%s]",
+                    smf_ue->supi, sess->psi, n2SmInfo->content_id);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    "No HandoverRequired N2 SM Content",
+                    smf_ue->supi, NULL);
+            return false;
+        }
 
-    gsm_header = (ogs_nas_5gsm_header_t *)n1smbuf->data;
-    ogs_assert(gsm_header);
+        sess->pti = OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED;
+    } else {
+        n1SmMsg = SmContextCreateData->n1_sm_msg;
+        if (!n1SmMsg || !n1SmMsg->content_id) {
+            ogs_error("[%s:%d] No n1SmMsg", smf_ue->supi, sess->psi);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                    "No n1SmMsg", smf_ue->supi, NULL);
+            return false;
+        }
 
-    sess->pti = gsm_header->procedure_transaction_identity;
-    if (sess->pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
-        ogs_error("[%s:%d] No PTI", smf_ue->supi, sess->psi);
-        smf_sbi_send_sm_context_create_error(stream,
-                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
-                "No PTI", smf_ue->supi, NULL);
-        return false;
+        n1smbuf = ogs_sbi_find_part_by_content_id(
+                message, n1SmMsg->content_id);
+        if (!n1smbuf) {
+            ogs_error("[%s:%d] No N1 SM Content [%s]",
+                    smf_ue->supi, sess->psi, n1SmMsg->content_id);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                    "No N1 SM Content", smf_ue->supi, NULL);
+            return false;
+        }
 
+        if (n1smbuf->len < sizeof(ogs_nas_5gsm_header_t)) {
+            ogs_error("[%s:%d] N1 SM Content too short [%d]",
+                    smf_ue->supi, sess->psi, n1smbuf->len);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                    "N1 SM Content too short", smf_ue->supi, NULL);
+            return false;
+        }
+
+        gsm_header = (ogs_nas_5gsm_header_t *)n1smbuf->data;
+        ogs_assert(gsm_header);
+
+        sess->pti = gsm_header->procedure_transaction_identity;
+        if (sess->pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+            ogs_error("[%s:%d] No PTI", smf_ue->supi, sess->psi);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                    "No PTI", smf_ue->supi, NULL);
+            return false;
+        }
     }
 
     if (!SmContextCreateData->dnn) {
@@ -431,6 +478,13 @@ bool smf_nsmf_handle_create_sm_context(
     }
 
     if (SmContextCreateData->h_smf_uri) {
+        if (SmContextCreateData->h_smf_id) {
+            if (sess->h_smf_id)
+                ogs_free(sess->h_smf_id);
+            sess->h_smf_id = ogs_strdup(SmContextCreateData->h_smf_id);
+            ogs_assert(sess->h_smf_id);
+        }
+
         if (sess->h_smf_uri) ogs_free(sess->h_smf_uri);
         sess->h_smf_uri = ogs_strdup(SmContextCreateData->h_smf_uri);
         ogs_assert(sess->h_smf_uri);
@@ -462,6 +516,78 @@ bool smf_nsmf_handle_create_sm_context(
         ogs_free(fqdn);
         ogs_freeaddrinfo(addr);
         ogs_freeaddrinfo(addr6);
+    }
+
+    if (inter_plmn_handover) {
+        /*
+         * Target V-SMF insertion/change.  Preserve the source anchor
+         * reference and the N2 HandoverRequired transfer while the complete
+         * SM context is retrieved asynchronously from the source/H-SMF.
+         */
+        if (!HOME_ROUTED_ROAMING_IN_VSMF(sess) ||
+            !SmContextCreateData->h_smf_id) {
+            ogs_error("[%s:%d] Inter-PLMN handover requires retained H-SMF",
+                    smf_ue->supi, sess->psi);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    "Inter-PLMN handover requires retained H-SMF",
+                    smf_ue->supi, NULL);
+            return false;
+        }
+
+        sess->inter_plmn_handover.pending = true;
+        sess->inter_plmn_handover.source_sm_context_uri =
+            ogs_strdup(SmContextCreateData->sm_context_ref);
+        sess->inter_plmn_handover.source_smf_id =
+            ogs_strdup(SmContextCreateData->sm_context_smf_id);
+        ogs_assert(sess->inter_plmn_handover.source_sm_context_uri);
+        ogs_assert(sess->inter_plmn_handover.source_smf_id);
+
+        if (!ogs_sbi_parse_plmn_id_nid(
+                &sess->inter_plmn_handover.source_smf_plmn_id,
+                SmContextCreateData->sm_context_smf_plmn_id)) {
+            ogs_error("[%s:%d] Invalid source SMF PLMN",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        sess->inter_plmn_handover.target_id =
+            OpenAPI_ng_ran_target_id_copy(
+                    NULL, SmContextCreateData->target_id);
+        if (!sess->inter_plmn_handover.target_id) {
+            ogs_error("[%s:%d] Cannot retain targetId",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        sess->inter_plmn_handover.handover_required =
+            ogs_pkbuf_copy(n2smbuf);
+        if (!sess->inter_plmn_handover.handover_required) {
+            ogs_error("[%s:%d] Cannot retain HandoverRequired transfer",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        /*
+         * The source SM context URI is explicit, so the generic SBI path
+         * targets that H-SMF directly (and uses SEPP when the authority is
+         * inter-PLMN).  Keep the inbound AMF stream associated with the
+         * transaction until RetrieveSMContext completes.
+         */
+        r = smf_sbi_discover_and_send(
+                OpenAPI_service_name_nsmf_pdusession, NULL,
+                smf_nsmf_pdusession_build_retrieve_sm_context,
+                sess, stream, SMF_CREATE_STATE_INTER_PLMN_HANDOVER, NULL);
+        if (r != OGS_OK) {
+            ogs_error("[%s:%d] Cannot retrieve source SM context",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        ogs_info("[%s:%d] Inter-PLMN V-SMF insertion: "
+                "RetrieveSMContext started", smf_ue->supi, sess->psi);
+        return true;
     }
 
     if (!HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
