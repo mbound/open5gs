@@ -1658,14 +1658,26 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
                     break;
                 DEFAULT
-                    ogs_error("Invalid resource name [%s]",
+                    if (sbi_message->PduSessionCreateData &&
+                        sbi_message->PduSessionCreateData->
+                            is_ho_preparation_indication &&
+                        sbi_message->PduSessionCreateData->
+                            ho_preparation_indication) {
+                        if (smf_nsmf_handle_create_data_in_hsmf(
+                                sess, stream, sbi_message) == false) {
+                            ogs_error("[%s:%d] H-SMF handover preparation "
+                                    "Create failed",
+                                    smf_ue->supi, sess->psi);
+                        }
+                    } else {
+                        ogs_error("Invalid resource name [%s]",
                                 sbi_message->h.resource.component[2]);
-                    ogs_assert(true ==
-                        ogs_sbi_server_send_error(stream,
-                            OGS_SBI_HTTP_STATUS_BAD_REQUEST, sbi_message,
-                            "Invalid resource name [%s]",
-                            sbi_message->h.resource.component[2], NULL));
-                    OGS_FSM_TRAN(s, smf_gsm_state_exception);
+                        ogs_assert(true ==
+                            ogs_sbi_server_send_error(stream,
+                                OGS_SBI_HTTP_STATUS_BAD_REQUEST, sbi_message,
+                                "Invalid resource name [%s]",
+                                sbi_message->h.resource.component[2], NULL));
+                    }
                 END
                 break;
 
