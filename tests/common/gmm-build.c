@@ -488,7 +488,7 @@ ogs_pkbuf_t *testgmm_build_authentication_response(test_ue_t *test_ue)
     milenage_f2345(test_ue->opc, test_ue->k, test_ue->rand,
             res, ck, ik, ak, NULL);
     serving_network_name =
-        ogs_serving_network_name_from_plmn_id(&test_self()->nr_tai.plmn_id);
+        ogs_serving_network_name_from_plmn_id(&test_ue->nr_tai.plmn_id);
     ogs_assert(serving_network_name);
     ogs_kdf_xres_star(
             ck, ik,
