@@ -432,6 +432,18 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_hsmf_update_data(
     HsmfUpdateData.request_indication = sess->nsmf_param.request_indication;
     ogs_assert(HsmfUpdateData.request_indication);
 
+    /*
+     * TS 29.502: hoPreparationIndication=false is used for handover
+     * execution/cancel/failure, and shall not be sent as false outside
+     * those procedures. PDU_SES_MOB here is the execution-phase HR
+     * mobility commit after target-RAN handover completion.
+     */
+    if (HsmfUpdateData.request_indication ==
+            OpenAPI_request_indication_PDU_SES_MOB) {
+        HsmfUpdateData.is_ho_preparation_indication = true;
+        HsmfUpdateData.ho_preparation_indication = false;
+    }
+
     HsmfUpdateData.cause = sess->nsmf_param.cause;
 
     HsmfUpdateData.up_cnx_state = sess->nsmf_param.up_cnx_state;
