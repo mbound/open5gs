@@ -1689,6 +1689,7 @@ bool smf_nsmf_handle_create_data_in_hsmf(
     smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
 {
     bool rc;
+    bool handover_preparation = false;
     smf_ue_t *smf_ue = NULL;
     char *type = NULL;
 
@@ -1731,6 +1732,133 @@ bool smf_nsmf_handle_create_data_in_hsmf(
                 OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
                 "No PduSessionCreateData", smf_ue->supi, NULL);
         return false;
+    }
+
+    handover_preparation =
+        PduSessionCreateData->is_ho_preparation_indication &&
+        PduSessionCreateData->ho_preparation_indication;
+
+    if (handover_preparation) {
+        ogs_ip_t target_vcn_ip;
+
+        /*
+         * TS 29.502 N2 handover preparation with V-SMF insertion/change.
+         * This POST prepares an already anchored PDU session.  Do not run
+         * establishment/N1/UDM/policy procedures and do not switch the
+         * active H-UPF downlink yet.
+         */
+        if (PduSessionCreateData->request_type !=
+                OpenAPI_request_type_EXISTING_PDU_SESSION) {
+            smf_sbi_send_pdu_session_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                    "Handover preparation is not EXISTING_PDU_SESSION",
+                    smf_ue->supi, NULL);
+            return false;
+        }
+
+        if (!PduSessionCreateData->vsmf_id ||
+            !PduSessionCreateData->vsmf_pdu_session_uri ||
+            !PduSessionCreateData->serving_network ||
+            !PduSessionCreateData->an_type ||
+            !PduSessionCreateData->rat_type) {
+            smf_sbi_send_pdu_session_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                    "Missing target V-SMF handover information",
+                    smf_ue->supi, NULL);
+            return false;
+        }
+
+        vcnTunnelInfo = PduSessionCreateData->vcn_tunnel_info;
+        if (!vcnTunnelInfo ||
+            !(vcnTunnelInfo->ipv4_addr || vcnTunnelInfo->ipv6_addr) ||
+            !vcnTunnelInfo->gtp_teid) {
+            smf_sbi_send_pdu_session_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                    "Invalid target vcnTunnelInfo",
+                    smf_ue->supi, NULL);
+            return false;
+        }
+
+        memset(&target_vcn_ip, 0, sizeof(target_vcn_ip));
+        if (vcnTunnelInfo->ipv4_addr) {
+            rv = ogs_ipv4_from_string(
+                    &target_vcn_ip.addr, vcnTunnelInfo->ipv4_addr);
+            if (rv != OGS_OK) {
+                smf_sbi_send_pdu_session_create_error(stream,
+                        OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                        OGS_SBI_APP_ERRNO_NULL,
+                        OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                        "Invalid target V-CN IPv4 address",
+                        vcnTunnelInfo->ipv4_addr, NULL);
+                return false;
+            }
+            target_vcn_ip.ipv4 = 1;
+            target_vcn_ip.len = OGS_IPV4_LEN;
+        }
+        if (vcnTunnelInfo->ipv6_addr) {
+            rv = ogs_ipv6addr_from_string(
+                    target_vcn_ip.addr6, vcnTunnelInfo->ipv6_addr);
+            if (rv != OGS_OK) {
+                smf_sbi_send_pdu_session_create_error(stream,
+                        OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                        OGS_SBI_APP_ERRNO_NULL,
+                        OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                        "Invalid target V-CN IPv6 address",
+                        vcnTunnelInfo->ipv6_addr, NULL);
+                return false;
+            }
+            target_vcn_ip.ipv6 = 1;
+            target_vcn_ip.len = OGS_IPV6_LEN;
+        }
+        if (target_vcn_ip.ipv4 && target_vcn_ip.ipv6)
+            target_vcn_ip.len = OGS_IPV4V6_LEN;
+
+        memset(&sess->hsmf_handover.target_vcn_ip, 0,
+                sizeof(sess->hsmf_handover.target_vcn_ip));
+        memcpy(&sess->hsmf_handover.target_vcn_ip, &target_vcn_ip,
+                sizeof(target_vcn_ip));
+        sess->hsmf_handover.target_vcn_teid =
+            ogs_uint64_from_string_hexadecimal(vcnTunnelInfo->gtp_teid);
+
+        if (sess->hsmf_handover.target_vsmf_id)
+            ogs_free(sess->hsmf_handover.target_vsmf_id);
+        sess->hsmf_handover.target_vsmf_id =
+            ogs_strdup(PduSessionCreateData->vsmf_id);
+        ogs_assert(sess->hsmf_handover.target_vsmf_id);
+
+        if (sess->hsmf_handover.target_vsmf_pdu_session_uri)
+            ogs_free(sess->hsmf_handover.target_vsmf_pdu_session_uri);
+        sess->hsmf_handover.target_vsmf_pdu_session_uri =
+            ogs_strdup(PduSessionCreateData->vsmf_pdu_session_uri);
+        ogs_assert(sess->hsmf_handover.target_vsmf_pdu_session_uri);
+
+        sess->hsmf_handover.pending = true;
+
+        ogs_info("[%s:%d] H-SMF staged target V-CN [%s:%s:%s]",
+                smf_ue->supi, sess->psi,
+                vcnTunnelInfo->ipv4_addr ?
+                    vcnTunnelInfo->ipv4_addr : "NULL",
+                vcnTunnelInfo->ipv6_addr ?
+                    vcnTunnelInfo->ipv6_addr : "NULL",
+                vcnTunnelInfo->gtp_teid);
+
+        /*
+         * Return the existing anchor parameters. The response helper omits
+         * N1 when hsmf_handover.pending is set.
+         */
+        if (!smf_sbi_send_pdu_session_created_data(sess, stream)) {
+            ogs_error("[%s:%d] Cannot return H-SMF handover preparation",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        return true;
     }
 
     n1SmInfoFromUe = PduSessionCreateData->n1_sm_info_from_ue;
