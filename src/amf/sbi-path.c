@@ -1082,6 +1082,128 @@ static int client_notify_cb(
     return OGS_OK;
 }
 
+static int client_inter_amf_ran_status_transfer_cb(
+        int status, ogs_sbi_response_t *response, void *data)
+{
+    int rv;
+    ogs_sbi_message_t message;
+
+    if (status != OGS_OK) {
+        ogs_log_message(
+                status == OGS_DONE ? OGS_LOG_DEBUG : OGS_LOG_WARN, 0,
+                "RAN status transfer relay failed [%d]", status);
+        if (response)
+            ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    ogs_assert(response);
+    memset(&message, 0, sizeof(message));
+
+    rv = ogs_sbi_parse_response(&message, response);
+    if (rv != OGS_OK) {
+        ogs_error("Cannot parse inter-AMF RAN status transfer response");
+        ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    if (message.res_status != OGS_SBI_HTTP_STATUS_OK) {
+        ogs_error("Inter-AMF RAN status transfer failed [HTTP:%d]",
+                message.res_status);
+        rv = OGS_ERROR;
+    } else {
+        rv = OGS_OK;
+    }
+
+    ogs_sbi_message_free(&message);
+    ogs_sbi_response_free(response);
+    return rv;
+}
+
+bool amf_sbi_send_inter_amf_ran_status_transfer(
+        amf_ue_t *amf_ue,
+        NGAP_RANStatusTransfer_TransparentContainer_t *transfer)
+{
+    bool rc = false;
+    int rv;
+    ogs_sbi_request_t *request = NULL;
+    ogs_sbi_client_t *client = NULL;
+    ogs_pkbuf_t *n2buf = NULL;
+    OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
+    char *fqdn = NULL;
+    uint16_t port = 0;
+    ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
+    NGAP_RANStatusTransfer_TransparentContainer_t copy;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_source);
+    ogs_assert(amf_ue->handover.target_ue_context_uri);
+    ogs_assert(transfer);
+
+    memset(&copy, 0, sizeof(copy));
+    rv = ogs_asn_copy_ie(
+            &asn_DEF_NGAP_RANStatusTransfer_TransparentContainer,
+            transfer, &copy);
+    if (rv != OGS_OK) {
+        ogs_error("[%s] Cannot copy RAN status transfer container",
+                amf_ue->supi);
+        return false;
+    }
+
+    n2buf = ogs_asn_encode(
+            &asn_DEF_NGAP_RANStatusTransfer_TransparentContainer, &copy);
+    if (!n2buf) {
+        ogs_error("[%s] Cannot encode RAN status transfer container",
+                amf_ue->supi);
+        return false;
+    }
+
+    if (ogs_sbi_getaddr_from_uri(
+            &scheme, &fqdn, &port, &addr, &addr6,
+            amf_ue->handover.target_ue_context_uri) == false ||
+        scheme == OpenAPI_uri_scheme_NULL) {
+        ogs_error("[%s] Invalid target UE context URI [%s]",
+                amf_ue->supi,
+                amf_ue->handover.target_ue_context_uri);
+        goto cleanup;
+    }
+
+    client = ogs_sbi_client_find(scheme, fqdn, port, addr, addr6);
+    if (!client)
+        client = ogs_sbi_client_add(scheme, fqdn, port, addr, addr6);
+    if (!client) {
+        ogs_error("[%s] Cannot create target AMF SBI client", amf_ue->supi);
+        goto cleanup;
+    }
+
+    request = amf_namf_comm_build_ran_status_transfer(amf_ue, n2buf);
+    n2buf = NULL; /* builder consumes the binary part */
+    if (!request) {
+        ogs_error("[%s] Cannot build inter-AMF RAN status transfer",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    rc = ogs_sbi_send_request_to_client(
+            client, client_inter_amf_ran_status_transfer_cb, request, NULL);
+    if (rc != true)
+        ogs_error("[%s] Cannot send inter-AMF RAN status transfer",
+                amf_ue->supi);
+
+cleanup:
+    if (request)
+        ogs_sbi_request_free(request);
+    if (n2buf)
+        ogs_pkbuf_free(n2buf);
+    if (fqdn)
+        ogs_free(fqdn);
+    if (addr)
+        ogs_freeaddrinfo(addr);
+    if (addr6)
+        ogs_freeaddrinfo(addr6);
+    return rc;
+}
+
 static int client_inter_amf_handover_complete_cb(
         int status, ogs_sbi_response_t *response, void *data)
 {
