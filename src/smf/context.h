@@ -92,6 +92,14 @@ typedef struct smf_nsmf_pdusession_param_s {
 
     OpenAPI_up_cnx_state_e up_cnx_state;
 
+    /*
+     * Handover execution/cancel indication carried between V-SMF and H-SMF.
+     * hoPreparationIndication is meaningful only when the presence bit is set.
+     */
+    OpenAPI_ho_state_e ho_state;
+    bool ho_preparation_indication_presence;
+    bool ho_preparation_indication;
+
 #define QOS_RULE_CODE_FROM_PFCP_FLAGS(pfcp_flags) \
         (pfcp_flags & OGS_PFCP_MODIFY_CREATE) ? \
             OGS_NAS_QOS_CODE_CREATE_NEW_QOS_RULE : \
