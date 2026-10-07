@@ -143,6 +143,9 @@ void smf_sbi_send_sm_context_create_error(
         const char *title, const char *detail,
         ogs_pkbuf_t *n1smbuf);
 
+bool smf_sbi_send_sm_context_retrieved_data(
+        smf_sess_t *sess, ogs_sbi_stream_t *stream);
+
 #define smf_sbi_send_sm_context_updated_data_up_cnx_state( \
             __sESS, __sTREAM, __uPCnxState) \
         smf_sbi_send_sm_context_updated_data(\
