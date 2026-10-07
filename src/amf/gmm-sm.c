@@ -1835,7 +1835,14 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
 
                 if (amf_sess_xact_count(amf_ue) == xact_count) {
 
-                    if (amf_update_allowed_nssai(amf_ue) == false) {
+                    /*
+                     * Without UDM subscription data yet (context received by
+                     * N2 handover) the Allowed NSSAI is derived after the
+                     * Nudm_SDM_Get below (nudm-handler.c), as for an
+                     * initial registration.
+                     */
+                    if (UDM_SDM_SUBSCRIBED(amf_ue) &&
+                        amf_update_allowed_nssai(amf_ue) == false) {
                         ogs_error("No Allowed-NSSAI");
                         r = nas_5gs_send_gmm_reject(
                                 ran_ue, amf_ue,
