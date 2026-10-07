@@ -1003,6 +1003,12 @@ bool smf_sbi_send_sm_context_retrieved_data(
         SmContext.qos_flows_list = qosFlowsList;
     }
 
+    /*
+     * TS 29.502 Table 6.1.6.2.27-1: ueEpsPdnConnection is mandatory and
+     * shall be an empty string when smContextType is not
+     * EPS_PDN_CONNECTION (here SM_CONTEXT).
+     */
+    RetrievedData.ue_eps_pdn_connection = (char *)"";
     RetrievedData.sm_context = &SmContext;
     sendmsg.SmContextRetrievedData = &RetrievedData;
 
