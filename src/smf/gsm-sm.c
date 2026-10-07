@@ -381,7 +381,11 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                         break;
                     }
 
-                    if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
+                    if (INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+                        ogs_info("[%s:%d] SMContextCreate inter-PLMN "
+                                "handover: waiting for RetrieveSMContext",
+                                smf_ue->supi, sess->psi);
+                    } else if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
                         ogs_info("[%s:%d] SMContextCreate HR Roaming in V-SMF",
                                 smf_ue->supi, sess->psi);
                         OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_establishment);
@@ -435,6 +439,52 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
         }
+        break;
+
+    case OGS_EVENT_SBI_CLIENT:
+        sbi_message = e->h.sbi.message;
+        ogs_assert(sbi_message);
+
+        smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+        ogs_assert(smf_ue);
+
+        stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
+        if (stream_id >= OGS_MIN_POOL_ID &&
+            stream_id <= OGS_MAX_POOL_ID)
+            stream = ogs_sbi_stream_find_by_id(stream_id);
+
+        if (e->h.sbi.state != SMF_CREATE_STATE_INTER_PLMN_HANDOVER ||
+            !INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+            ogs_error("[%s:%d] Unexpected SBI client response in initial "
+                    "state [state:%d]",
+                    smf_ue->supi, sess->psi, e->h.sbi.state);
+            OGS_FSM_TRAN(s, smf_gsm_state_exception);
+            break;
+        }
+
+        if (!stream) {
+            ogs_error("[%s:%d] AMF CreateSMContext stream is gone",
+                    smf_ue->supi, sess->psi);
+            OGS_FSM_TRAN(s, smf_gsm_state_exception);
+            break;
+        }
+
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        if (service_name_id != OpenAPI_service_name_nsmf_pdusession ||
+            smf_nsmf_handle_retrieved_sm_context_in_vsmf(
+                    sess, stream, sbi_message) == false) {
+            ogs_error("[%s:%d] Inter-PLMN RetrieveSMContext handling failed",
+                    smf_ue->supi, sess->psi);
+            ogs_assert(true == ogs_sbi_server_send_error(
+                    stream, OGS_SBI_HTTP_STATUS_BAD_GATEWAY,
+                    sbi_message, "RetrieveSMContext failed",
+                    smf_ue->supi, NULL));
+            OGS_FSM_TRAN(s, smf_gsm_state_exception);
+            break;
+        }
+
+        OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_establishment);
         break;
 
     case SMF_EVT_5GSM_MESSAGE:
