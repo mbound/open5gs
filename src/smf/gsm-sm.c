@@ -2117,6 +2117,23 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                             ogs_info("[%d] Inter-PLMN HR handover committed",
                                     sess->psi);
                             break;
+                        case SMF_UPDATE_STATE_INTER_PLMN_HO_CANCEL:
+                            /*
+                             * H-SMF discarded the staged target N9 path.
+                             * Acknowledge relocation cancel to the AMF, then
+                             * delete the temporary target V-UPF/V-SMF session
+                             * locally. The H-SMF/H-UPF anchor stays active.
+                             */
+                            sess->inter_plmn_handover.pending = false;
+                            smf_sbi_send_sm_context_updated_data_ho_state(
+                                    sess, stream,
+                                    OpenAPI_ho_state_CANCELLED);
+
+                            e->h.sbi.state =
+                                OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED;
+                            OGS_FSM_TRAN(
+                                    s, smf_gsm_state_wait_pfcp_deletion);
+                            break;
                         case SMF_UPDATE_STATE_UE_REQ_MOD:
                             /*
                              * AMF stream was stored when HsmfUpdateData
