@@ -2202,6 +2202,11 @@ void smf_sess_remove(smf_sess_t *sess)
     if (sess->inter_plmn_handover.handover_required)
         ogs_pkbuf_free(sess->inter_plmn_handover.handover_required);
 
+    if (sess->hsmf_handover.target_vsmf_id)
+        ogs_free(sess->hsmf_handover.target_vsmf_id);
+    if (sess->hsmf_handover.target_vsmf_pdu_session_uri)
+        ogs_free(sess->hsmf_handover.target_vsmf_pdu_session_uri);
+
     OGS_NAS_CLEAR_DATA(&sess->h_smf_extended_protocol_configuration_options);
     sess->h_smf_gsm_cause = 0;
 
