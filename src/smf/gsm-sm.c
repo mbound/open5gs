@@ -2079,6 +2079,21 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                     sess, stream, OpenAPI_ho_state_COMPLETED);
                             break;
                         case SMF_UPDATE_STATE_INTER_PLMN_HO_COMMIT:
+                            if (sbi_message->res_status !=
+                                    OGS_SBI_HTTP_STATUS_NO_CONTENT &&
+                                sbi_message->res_status !=
+                                    OGS_SBI_HTTP_STATUS_OK) {
+                                ogs_error("[%s:%d] H-SMF mobility commit "
+                                        "failed [HTTP:%d]",
+                                        smf_ue->supi, sess->psi,
+                                        sbi_message->res_status);
+                                smf_sbi_send_sm_context_update_error_log(
+                                        stream,
+                                        OGS_SBI_HTTP_STATUS_BAD_GATEWAY,
+                                        "H-SMF mobility commit failed",
+                                        NULL);
+                                break;
+                            }
                             /*
                              * The retained H-SMF/H-UPF has committed the
                              * target V-UPF N9 path. Only now may the V-SMF
@@ -2118,6 +2133,21 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                     sess->psi);
                             break;
                         case SMF_UPDATE_STATE_INTER_PLMN_HO_CANCEL:
+                            if (sbi_message->res_status !=
+                                    OGS_SBI_HTTP_STATUS_NO_CONTENT &&
+                                sbi_message->res_status !=
+                                    OGS_SBI_HTTP_STATUS_OK) {
+                                ogs_error("[%s:%d] H-SMF handover cancel "
+                                        "failed [HTTP:%d]",
+                                        smf_ue->supi, sess->psi,
+                                        sbi_message->res_status);
+                                smf_sbi_send_sm_context_update_error_log(
+                                        stream,
+                                        OGS_SBI_HTTP_STATUS_BAD_GATEWAY,
+                                        "H-SMF handover cancel failed",
+                                        NULL);
+                                break;
+                            }
                             /*
                              * H-SMF discarded the staged target N9 path.
                              * Acknowledge relocation cancel to the AMF, then
