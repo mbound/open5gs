@@ -27,7 +27,7 @@
 
 int amf_nsmf_pdusession_handle_create_sm_context(
         amf_ue_t *amf_ue, ran_ue_t *ran_ue, amf_sess_t *sess,
-        ogs_sbi_message_t *recvmsg)
+        int state, ogs_sbi_message_t *recvmsg)
 {
     int rv, r;
 
@@ -149,6 +149,57 @@ int amf_nsmf_pdusession_handle_create_sm_context(
 
         ogs_sbi_header_free(&header);
 
+        if (state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER) {
+            OpenAPI_sm_context_created_data_t *CreatedData = NULL;
+            OpenAPI_ref_to_binary_data_t *n2SmInfo = NULL;
+            ogs_pkbuf_t *n2smbuf = NULL;
+
+            CreatedData = recvmsg->SmContextCreatedData;
+            if (!CreatedData ||
+                CreatedData->ho_state != OpenAPI_ho_state_PREPARING ||
+                CreatedData->n2_sm_info_type !=
+                    OpenAPI_n2_sm_info_type_PDU_RES_SETUP_REQ ||
+                !CreatedData->n2_sm_info ||
+                !CreatedData->n2_sm_info->content_id) {
+                ogs_error("[%s:%d] Invalid inter-PLMN handover "
+                        "SmContextCreatedData",
+                        amf_ue->supi, sess->psi);
+                amf_namf_comm_fail_create_ue_context(amf_ue, NULL);
+                return OGS_ERROR;
+            }
+
+            n2SmInfo = CreatedData->n2_sm_info;
+            n2smbuf = ogs_sbi_find_part_by_content_id(
+                    recvmsg, n2SmInfo->content_id);
+            if (!n2smbuf) {
+                ogs_error("[%s:%d] No PDU_RES_SETUP_REQ N2 content",
+                        amf_ue->supi, sess->psi);
+                amf_namf_comm_fail_create_ue_context(amf_ue, NULL);
+                return OGS_ERROR;
+            }
+
+            AMF_SESS_STORE_N2_TRANSFER(
+                    sess, handover_request, ogs_pkbuf_copy(n2smbuf));
+
+            /*
+             * The current transaction has already been removed by amf-sm
+             * before this handler is entered. Once every migrated session
+             * has returned PREPARING, the target AMF can issue the NGAP
+             * Handover Request.
+             */
+            if (AMF_SESSION_SYNC_DONE(
+                    amf_ue, AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER)) {
+                r = ngap_send_handover_request_to_target(amf_ue);
+                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    return r;
+
+                AMF_UE_CLEAR_N2_TRANSFER(amf_ue, handover_request);
+            }
+
+            return OGS_OK;
+        }
+
         if (sess->pdu_session_establishment_accept) {
             /*
              * [1-SERVER] /namf-comm/v1/ue-contexts/{supi}/n1-n2-messages
@@ -180,6 +231,14 @@ int amf_nsmf_pdusession_handle_create_sm_context(
         }
 
     } else {
+        if (state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER) {
+            ogs_error("[%s:%d] Target V-SMF handover preparation failed "
+                    "[HTTP:%d]",
+                    amf_ue->supi, sess->psi, recvmsg->res_status);
+            amf_namf_comm_fail_create_ue_context(amf_ue, NULL);
+            return OGS_ERROR;
+        }
+
         OpenAPI_sm_context_create_error_t *SmContextCreateError = NULL;
         OpenAPI_ref_to_binary_data_t *n1SmMsg = NULL;
         ogs_pkbuf_t *n1smbuf = NULL;
