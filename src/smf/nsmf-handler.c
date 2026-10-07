@@ -1516,7 +1516,16 @@ bool smf_nsmf_handle_update_sm_context(
             if (far_update) {
                 uint64_t pfcp_flags =
                     OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_ACTIVATE|
-                    OGS_PFCP_MODIFY_N2_HANDOVER|OGS_PFCP_MODIFY_END_MARKER;
+                    OGS_PFCP_MODIFY_N2_HANDOVER;
+
+                /*
+                 * The end marker goes on the old DL path. In an inter-PLMN
+                 * HR handover the target V-UPF is new and has no old path;
+                 * the H-UPF (PSA) sends it when the H-SMF switches the DL to
+                 * N9 (TS 23.502 4.9.1.3.3 step 12).
+                 */
+                if (!INTER_PLMN_HANDOVER_IN_VSMF(sess))
+                    pfcp_flags |= OGS_PFCP_MODIFY_END_MARKER;
 
                 if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
                     pfcp_flags |= OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING;
