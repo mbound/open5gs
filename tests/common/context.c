@@ -41,15 +41,22 @@ void test_context_init(void)
     ogs_pool_init(&test_sess_pool, ogs_app()->pool.sess);
     ogs_pool_init(&test_bearer_pool, ogs_app()->pool.bearer);
 
+    /*
+     * The simulated gNBs' N3 addresses default to loopback. A core running
+     * in other hosts/containers cannot reach those, so TEST_GNB1_ADDR and
+     * TEST_GNB2_ADDR may name routable IPv4 addresses instead.
+     */
     rv = ogs_getaddrinfo(&test_self()->gnb1_addr, AF_UNSPEC,
-            "127.0.0.2", OGS_GTPV1_U_UDP_PORT, 0);
+            getenv("TEST_GNB1_ADDR") ? getenv("TEST_GNB1_ADDR") : "127.0.0.2",
+            OGS_GTPV1_U_UDP_PORT, 0);
     ogs_assert(rv == OGS_OK);
     rv = ogs_getaddrinfo(&test_self()->gnb1_addr6, AF_UNSPEC,
             "fd69:f21d:873c:fa::2", OGS_GTPV1_U_UDP_PORT, 0);
     ogs_assert(rv == OGS_OK);
 
     rv = ogs_getaddrinfo(&test_self()->gnb2_addr, AF_UNSPEC,
-            "127.0.0.3", OGS_GTPV1_U_UDP_PORT, 0);
+            getenv("TEST_GNB2_ADDR") ? getenv("TEST_GNB2_ADDR") : "127.0.0.3",
+            OGS_GTPV1_U_UDP_PORT, 0);
     ogs_assert(rv == OGS_OK);
     rv = ogs_getaddrinfo(&test_self()->gnb2_addr6, AF_UNSPEC,
             "fd69:f21d:873c:fa::3", OGS_GTPV1_U_UDP_PORT, 0);
