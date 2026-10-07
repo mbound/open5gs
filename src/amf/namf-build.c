@@ -613,6 +613,66 @@ cleanup:
     return request;
 }
 
+ogs_sbi_request_t *amf_namf_comm_build_ran_status_transfer(
+        amf_ue_t *amf_ue, void *data)
+{
+    ogs_pkbuf_t *n2buf = data;
+    ogs_sbi_message_t message;
+    ogs_sbi_request_t *request = NULL;
+
+    OpenAPI_n1_n2_message_transfer_req_data_t req;
+    OpenAPI_n2_info_container_t n2_container;
+    OpenAPI_n2_ran_information_t ran_info;
+    OpenAPI_n2_info_content_t n2_content;
+    OpenAPI_ref_to_binary_data_t ngap_data;
+
+    static char content_id[] = "ngap-ran-status";
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->supi);
+    ogs_assert(amf_ue->handover.target_ue_context_uri);
+    ogs_assert(n2buf);
+
+    memset(&message, 0, sizeof(message));
+    memset(&req, 0, sizeof(req));
+    memset(&n2_container, 0, sizeof(n2_container));
+    memset(&ran_info, 0, sizeof(ran_info));
+    memset(&n2_content, 0, sizeof(n2_content));
+    memset(&ngap_data, 0, sizeof(ngap_data));
+
+    message.h.method = (char *)OGS_SBI_HTTP_METHOD_POST;
+    message.h.uri = ogs_msprintf("%s/%s",
+            amf_ue->handover.target_ue_context_uri,
+            OGS_SBI_RESOURCE_NAME_N1_N2_MESSAGES);
+    ogs_assert(message.h.uri);
+
+    message.N1N2MessageTransferReqData = &req;
+    req.n2_info_container = &n2_container;
+
+    n2_container.n2_information_class = OpenAPI_n2_information_class_RAN;
+    n2_container.ran_info = &ran_info;
+
+    ran_info.n2_info_content = &n2_content;
+    n2_content.ngap_ie_type =
+        OpenAPI_ngap_ie_type_RAN_STATUS_TRANS_CONTAINER;
+    n2_content.ngap_data = &ngap_data;
+
+    ngap_data.content_id = content_id;
+
+    message.part[0].pkbuf = n2buf;
+    message.part[0].content_id = content_id;
+    message.part[0].content_type = (char *)OGS_SBI_CONTENT_NGAP_TYPE;
+    message.num_of_part = 1;
+
+    request = ogs_sbi_build_request(&message);
+    ogs_expect(request);
+
+    ogs_free(message.h.uri);
+    ogs_pkbuf_free(n2buf);
+
+    return request;
+}
+
 ogs_sbi_request_t *amf_namf_comm_build_release_ue_context(
         amf_ue_t *amf_ue, void *data)
 {
