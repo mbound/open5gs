@@ -280,6 +280,23 @@ int amf_namf_comm_handle_create_ue_context_request(
     }
     amf_ue_associate_ran_ue(amf_ue, target_ue);
 
+    /*
+     * Mark the relocation context before decoding the transferred sessions.
+     * The session decoder needs to distinguish a same-PLMN handover (reuse
+     * the transferred SM context) from an inter-PLMN HPLMN->VPLMN handover
+     * where the transferred H-SMF context is migration metadata and a local
+     * V-SMF must be inserted.
+     */
+    amf_ue->handover.inter_amf_target = true;
+    memcpy(&amf_ue->nr_tai, &target_tai, sizeof(target_tai));
+
+    if (CreateData->serving_network) {
+        ogs_sbi_parse_plmn_id_nid(
+                &amf_ue->handover.source_plmn_id,
+                CreateData->serving_network);
+        amf_ue->handover.source_plmn_id_presence = true;
+    }
+
     r = amf_namf_comm_decode_ue_context(
             amf_ue, CreateData->ue_context, false);
     if (r != OGS_OK)
@@ -294,13 +311,14 @@ int amf_namf_comm_handle_create_ue_context_request(
 
     sess = amf_sess_find_by_psi(
             amf_ue, N2SmInformation->pdu_session_id);
-    if (!sess || !SESSION_CONTEXT_IN_SMF(sess)) {
-        ogs_error("[%s:%d] No transferred SM context",
+    if (!sess ||
+        (!SESSION_CONTEXT_IN_SMF(sess) &&
+         !sess->inter_plmn_handover.pending)) {
+        ogs_error("[%s:%d] No transferred or relocatable SM context",
                 ue_context_id, N2SmInformation->pdu_session_id);
         goto cleanup;
     }
 
-    amf_ue->handover.inter_amf_target = true;
     amf_ue->handover.create_ue_context_stream_id =
         ogs_sbi_id_from_stream(stream);
     amf_ue->handover.n2_notify_uri =
