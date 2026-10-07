@@ -744,6 +744,8 @@ struct amf_ue_s {
          */
         bool inter_amf_source;
         bool inter_amf_target;
+        bool source_plmn_id_presence;
+        ogs_plmn_id_t source_plmn_id;
         ogs_pool_id_t create_ue_context_stream_id;
         ogs_pool_id_t release_ue_context_stream_id;
         char *n2_notify_uri;
@@ -841,6 +843,24 @@ typedef struct amf_sess_s {
     struct {
         ogs_sbi_client_t *client;
     } sm_context;
+
+    /*
+     * Inter-PLMN N2 handover SM-context relocation metadata.
+     *
+     * The source SM context is not the live target-AMF SM context while a
+     * V-SMF is being inserted/changed.  Keep it separately until the target
+     * AMF has selected and created the visited SM context.
+     */
+    struct {
+        bool pending;
+        char *source_sm_context_uri;
+        char *source_smf_id;
+        bool source_smf_plmn_id_presence;
+        ogs_plmn_id_t source_smf_plmn_id;
+        char *h_smf_id;
+        char *v_smf_id;
+        ogs_pkbuf_t *handover_required;
+    } inter_plmn_handover;
 
     bool pdu_session_release_complete_received;
     bool pdu_session_resource_release_response_received;
