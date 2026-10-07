@@ -1527,15 +1527,57 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                             break;
                         case OpenAPI_request_indication_PDU_SES_MOB:
                             /*
-                             * HPLMN -> VPLMN HR handover execution.
+                             * HPLMN -> VPLMN HR handover execution/cancel.
                              * Preparation staged the target V-SMF/V-UPF N9
-                             * endpoint; execution commits that endpoint at
-                             * the retained H-UPF without changing the PSA.
+                             * endpoint. hoPreparationIndication=false marks
+                             * execution, cancel or failure per TS 29.502.
                              */
                             if (!INTER_PLMN_HANDOVER_PREP_IN_HSMF(sess)) {
                                 hsmf_update_send_bad_request(
                                         stream, sbi_message, sess,
                                         "No staged inter-PLMN handover");
+                                break;
+                            }
+
+                            if (!sess->nsmf_param.
+                                    ho_preparation_indication_presence ||
+                                sess->nsmf_param.
+                                    ho_preparation_indication) {
+                                hsmf_update_send_bad_request(
+                                        stream, sbi_message, sess,
+                                        "Invalid hoPreparationIndication");
+                                break;
+                            }
+
+                            /*
+                             * No V-CN tunnel means Relocation Cancel:
+                             * discard only the staged target path. The active
+                             * H-UPF/PSA and its source-side path remain intact.
+                             */
+                            if (!sess->nsmf_param.dl_teid) {
+                                if (sess->hsmf_handover.target_vsmf_id) {
+                                    ogs_free(sess->hsmf_handover.
+                                        target_vsmf_id);
+                                    sess->hsmf_handover.target_vsmf_id = NULL;
+                                }
+                                if (sess->hsmf_handover.
+                                        target_vsmf_pdu_session_uri) {
+                                    ogs_free(sess->hsmf_handover.
+                                        target_vsmf_pdu_session_uri);
+                                    sess->hsmf_handover.
+                                        target_vsmf_pdu_session_uri = NULL;
+                                }
+                                memset(&sess->hsmf_handover.target_vcn_ip, 0,
+                                        sizeof(sess->hsmf_handover.
+                                            target_vcn_ip));
+                                sess->hsmf_handover.target_vcn_teid = 0;
+                                sess->hsmf_handover.pending = false;
+
+                                ogs_assert(true ==
+                                    ogs_sbi_send_http_status_no_content(
+                                        stream));
+                                ogs_info("[%d] Inter-PLMN HR handover "
+                                        "preparation cancelled", sess->psi);
                                 break;
                             }
 
