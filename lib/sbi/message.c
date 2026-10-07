@@ -143,6 +143,10 @@ void ogs_sbi_message_free(ogs_sbi_message_t *message)
         OpenAPI_sm_context_release_data_free(message->SmContextReleaseData);
     if (message->SmContextReleasedData)
         OpenAPI_sm_context_released_data_free(message->SmContextReleasedData);
+    if (message->SmContextRetrieveData)
+        OpenAPI_sm_context_retrieve_data_free(message->SmContextRetrieveData);
+    if (message->SmContextRetrievedData)
+        OpenAPI_sm_context_retrieved_data_free(message->SmContextRetrievedData);
     if (message->PduSessionCreateData)
         OpenAPI_pdu_session_create_data_free(message->PduSessionCreateData);
     if (message->PduSessionCreatedData)
@@ -1659,6 +1663,14 @@ static char *build_json(ogs_sbi_message_t *message)
     } else if (message->SmContextReleasedData) {
         item = OpenAPI_sm_context_released_data_convertToJSON(
                 message->SmContextReleasedData);
+        ogs_assert(item);
+    } else if (message->SmContextRetrieveData) {
+        item = OpenAPI_sm_context_retrieve_data_convertToJSON(
+                message->SmContextRetrieveData);
+        ogs_assert(item);
+    } else if (message->SmContextRetrievedData) {
+        item = OpenAPI_sm_context_retrieved_data_convertToJSON(
+                message->SmContextRetrievedData);
         ogs_assert(item);
     } else if (message->PduSessionCreateData) {
         item = OpenAPI_pdu_session_create_data_convertToJSON(
