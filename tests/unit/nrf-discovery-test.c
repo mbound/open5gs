@@ -36,9 +36,31 @@ static ogs_sbi_nf_instance_t *test_nf_instance_new(OpenAPI_nf_type_e nf_type)
     return nf_instance;
 }
 
+/*
+ * nf_info entries are heap-allocated here as well: ogs_sbi_nf_info_add()
+ * needs nf_info_pool, which only ogs_sbi_context_init() creates.
+ */
+static ogs_sbi_nf_info_t *test_nf_info_add(
+        ogs_sbi_nf_instance_t *nf_instance, OpenAPI_nf_type_e nf_type)
+{
+    ogs_sbi_nf_info_t *nf_info;
+
+    nf_info = ogs_calloc(1, sizeof(*nf_info));
+    ogs_assert(nf_info);
+    nf_info->nf_type = nf_type;
+    ogs_list_add(&nf_instance->nf_info_list, nf_info);
+
+    return nf_info;
+}
+
 static void test_nf_instance_free(ogs_sbi_nf_instance_t *nf_instance)
 {
-    ogs_sbi_nf_info_remove_all(&nf_instance->nf_info_list);
+    ogs_sbi_nf_info_t *nf_info, *next_nf_info;
+
+    ogs_list_for_each_safe(&nf_instance->nf_info_list, next_nf_info, nf_info) {
+        ogs_list_remove(&nf_instance->nf_info_list, nf_info);
+        ogs_free(nf_info);
+    }
     ogs_free(nf_instance);
 }
 
@@ -444,7 +466,7 @@ static void nrf_discovery_test14(abts_case *tc, void *data)
     bool result;
 
     nf = test_nf_instance_new(OpenAPI_nf_type_AMF);
-    info = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
+    info = test_nf_info_add(nf, OpenAPI_nf_type_AMF);
     ogs_assert(info);
 
     memset(&tai, 0, sizeof(tai));
@@ -478,7 +500,7 @@ static void nrf_discovery_test15(abts_case *tc, void *data)
     bool result;
 
     nf = test_nf_instance_new(OpenAPI_nf_type_AMF);
-    info = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
+    info = test_nf_info_add(nf, OpenAPI_nf_type_AMF);
     ogs_assert(info);
 
     memset(&served_tai, 0, sizeof(served_tai));
@@ -514,7 +536,7 @@ static void nrf_discovery_test16(abts_case *tc, void *data)
     bool result;
 
     nf = test_nf_instance_new(OpenAPI_nf_type_AMF);
-    info = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
+    info = test_nf_info_add(nf, OpenAPI_nf_type_AMF);
     ogs_assert(info);
 
     memset(&query_tai, 0, sizeof(query_tai));
@@ -551,8 +573,8 @@ static void nrf_discovery_test17(abts_case *tc, void *data)
     bool result;
 
     nf = test_nf_instance_new(OpenAPI_nf_type_AMF);
-    first = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
-    second = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
+    first = test_nf_info_add(nf, OpenAPI_nf_type_AMF);
+    second = test_nf_info_add(nf, OpenAPI_nf_type_AMF);
     ogs_assert(first);
     ogs_assert(second);
 
