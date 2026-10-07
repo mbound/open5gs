@@ -2594,6 +2594,24 @@ static int parse_json(ogs_sbi_message_t *message,
                         }
                     }
                     break;
+                CASE(OGS_SBI_RESOURCE_NAME_RETRIEVE)
+                    if (message->res_status == 0) {
+                        message->SmContextRetrieveData =
+                            OpenAPI_sm_context_retrieve_data_parseFromJSON(item);
+                        if (!message->SmContextRetrieveData) {
+                            rv = OGS_ERROR;
+                            ogs_error("JSON parse error");
+                        }
+                    } else if (message->res_status == OGS_SBI_HTTP_STATUS_OK) {
+                        message->SmContextRetrievedData =
+                            OpenAPI_sm_context_retrieved_data_parseFromJSON(
+                                    item);
+                        if (!message->SmContextRetrievedData) {
+                            rv = OGS_ERROR;
+                            ogs_error("JSON parse error");
+                        }
+                    }
+                    break;
                 DEFAULT
                     if (message->res_status == 0) {
                         message->SmContextCreateData =
