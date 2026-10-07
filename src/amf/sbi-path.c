@@ -598,6 +598,12 @@ static int client_discover_cb(
             ogs_sbi_discovery_option_add_target_plmn_list(
                     h_discovery_option, &amf_ue->home_plmn_id);
 
+            if (sess->inter_plmn_handover.pending &&
+                sess->inter_plmn_handover.h_smf_id)
+                ogs_sbi_discovery_option_set_target_nf_instance_id(
+                        h_discovery_option,
+                        sess->inter_plmn_handover.h_smf_id);
+
             ogs_assert(ogs_local_conf()->num_of_serving_plmn_id);
             for (i = 0; i < ogs_local_conf()->num_of_serving_plmn_id; i++) {
                 ogs_sbi_discovery_option_add_requester_plmn_list(
@@ -628,11 +634,27 @@ static int client_discover_cb(
     } else if (current_state == AMF_SMF_SELECTION_IN_HPLMN_IN_HOME_ROUTED) {
         ogs_info("Home-Routed Roaming(HPLMN)");
 
+        if (sess->inter_plmn_handover.pending &&
+            sess->inter_plmn_handover.h_smf_id &&
+            strcmp(sess->inter_plmn_handover.h_smf_id,
+                   nf_instance->id) != 0) {
+            ogs_error("[%s:%d] H-SMF anchor changed during inter-PLMN "
+                    "handover [%s != %s]",
+                    amf_ue->supi, sess->psi,
+                    sess->inter_plmn_handover.h_smf_id,
+                    nf_instance->id);
+            goto cleanup;
+        }
+
         OGS_SBI_SETUP_NF_INSTANCE(sess->sbi.home_nsmf_pdusession, nf_instance);
     } else {
         ogs_fatal("Invalid current_state = %d", current_state);
         ogs_assert_if_reached();
     }
+
+    if (next_state == AMF_CREATE_SM_CONTEXT_NO_STATE &&
+        sess->inter_plmn_handover.pending)
+        next_state = AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER;
 
     if (next_state == AMF_SMF_SELECTION_IN_HPLMN_IN_HOME_ROUTED) {
 
@@ -658,7 +680,8 @@ static int client_discover_cb(
 
         ogs_sbi_discovery_option_free(v_discovery_option);
 
-    } else if (next_state == AMF_CREATE_SM_CONTEXT_NO_STATE) {
+    } else if (next_state == AMF_CREATE_SM_CONTEXT_NO_STATE ||
+               next_state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER) {
 
         r = amf_sess_sbi_discover_and_send(
                 service_name, v_discovery_option,
@@ -686,6 +709,42 @@ cleanup:
     ogs_sbi_response_free(response);
 
     return OGS_ERROR;
+}
+
+int amf_sbi_start_inter_plmn_handover(
+        ran_ue_t *ran_ue, amf_sess_t *sess)
+{
+    int r;
+    amf_ue_t *amf_ue = NULL;
+    amf_nnssf_nsselection_param_t param;
+
+    ogs_assert(ran_ue);
+    ogs_assert(sess);
+    ogs_assert(sess->inter_plmn_handover.pending);
+
+    amf_ue = amf_ue_find_by_id(sess->amf_ue_id);
+    ogs_assert(amf_ue);
+
+    memset(&param, 0, sizeof(param));
+    param.slice_info_for_pdu_session.presence = true;
+    param.slice_info_for_pdu_session.snssai = &sess->s_nssai;
+    param.slice_info_for_pdu_session.roaming_indication =
+        OpenAPI_roaming_indication_HOME_ROUTED_ROAMING;
+    param.slice_info_for_pdu_session.home_snssai = &sess->s_nssai;
+    param.home_plmn_id = &amf_ue->home_plmn_id;
+    param.tai = &amf_ue->nr_tai;
+
+    /*
+     * Reuse the normal HR SMF selection pipeline. It first selects the
+     * visited SMF, then the H-SMF, but the latter is constrained by the
+     * transferred hsmfId so the home anchor cannot change.
+     */
+    r = amf_sess_sbi_discover_and_send(
+            OpenAPI_service_name_nnssf_nsselection, NULL,
+            amf_nnssf_nsselection_build_get,
+            ran_ue, sess,
+            AMF_SMF_SELECTION_IN_VPLMN_IN_HOME_ROUTED, &param);
+    return r;
 }
 
 int amf_sess_sbi_discover_by_nsi(
