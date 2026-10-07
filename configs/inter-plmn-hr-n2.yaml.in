@@ -25,7 +25,6 @@ global:
     no_pcrf: true
     no_hss: true
     no_bsf: true
-    no_udr: true
 
 # --------------------------------------------------------------------------
 # HPLMN 999-70
@@ -220,6 +219,15 @@ pcf:
                   priority_level: 8
                   pre_emption_vulnerability: 1
                   pre_emption_capability: 1
+
+udr:
+  sbi:
+    server:
+      - address: 127.0.1.20
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.1.200:7777
 
 # --------------------------------------------------------------------------
 # VPLMN 001-01
