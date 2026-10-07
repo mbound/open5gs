@@ -1028,7 +1028,21 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                     OGS_FSM_TRAN(s, smf_gsm_state_5gc_n1_n2_reject);
                     return;
                 }
-                if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
+                if (INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+                    /*
+                     * The visited N9 leg is ready.  Ask the retained H-SMF
+                     * to prepare the same anchor PDU session for the new
+                     * V-SMF.  Keep the target-AMF CreateSMContext stream
+                     * associated with this SBI transaction.
+                     */
+                    r = smf_sbi_discover_and_send(
+                            OpenAPI_service_name_nsmf_pdusession, NULL,
+                            smf_nsmf_pdusession_build_create_data,
+                            sess, stream,
+                            SMF_CREATE_STATE_INTER_PLMN_HANDOVER, NULL);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                } else if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
                     r = smf_sbi_discover_and_send(
                             OpenAPI_service_name_nsmf_pdusession, NULL,
                             smf_nsmf_pdusession_build_create_data,
