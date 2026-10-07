@@ -643,6 +643,26 @@ typedef struct smf_sess_s {
         int pdu_session_resource_release;
     } ngap_state;
 
+    /*
+     * Inter-PLMN N2 handover with V-SMF insertion/change.
+     *
+     * This state belongs to the target V-SMF.  It is separate from the
+     * ordinary handover state below because the source SM context remains
+     * owned by the anchor H-SMF while this SMF creates a new visited leg.
+     */
+#define INTER_PLMN_HANDOVER_IN_VSMF(__sESS) \
+    ((__sESS) && (__sESS)->inter_plmn_handover.pending)
+    struct {
+        bool pending;
+
+        char *source_sm_context_uri;
+        char *source_smf_id;
+        ogs_plmn_id_t source_smf_plmn_id;
+
+        OpenAPI_ng_ran_target_id_t *target_id;
+        ogs_pkbuf_t *handover_required;
+    } inter_plmn_handover;
+
     /* Handover */
     struct {
         bool prepared;
