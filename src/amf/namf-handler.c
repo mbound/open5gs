@@ -2706,8 +2706,7 @@ static void amf_namf_comm_decode_ue_session_context_list(
     OpenAPI_lnode_t *node = NULL;
 
     OpenAPI_list_for_each(SessionContextList, node) {
-        OpenAPI_pdu_session_context_t *PduSessionContext;
-        PduSessionContext = node->data;
+        OpenAPI_pdu_session_context_t *PduSessionContext = node->data;
         amf_sess_t *sess = NULL;
 
         int rv;
@@ -2715,15 +2714,17 @@ static void amf_namf_comm_decode_ue_session_context_list(
         ogs_sbi_header_t header;
 
         bool rc;
+        bool inter_plmn = false;
+        bool insert_vsmf = false;
         ogs_sbi_client_t *client = NULL;
         OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
         char *fqdn = NULL;
         uint16_t fqdn_port = 0;
         ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
 
-        if (!PduSessionContext->sm_context_ref) {
+        if (!PduSessionContext || !PduSessionContext->sm_context_ref) {
             ogs_error("No smContextRef [PSI:%d]",
-                    PduSessionContext->pdu_session_id);
+                    PduSessionContext ? PduSessionContext->pdu_session_id : 0);
             continue;
         }
 
@@ -2758,20 +2759,84 @@ static void amf_namf_comm_decode_ue_session_context_list(
             ogs_error("[%d] No SmContextRef [%s]",
                     PduSessionContext->pdu_session_id,
                     PduSessionContext->sm_context_ref);
-
             ogs_sbi_header_free(&header);
             continue;
         }
 
+        if (amf_ue->handover.inter_amf_target &&
+            amf_ue->handover.source_plmn_id_presence &&
+            memcmp(&amf_ue->handover.source_plmn_id,
+                   &amf_ue->nr_tai.plmn_id, OGS_PLMN_ID_LEN) != 0)
+            inter_plmn = true;
+
+        /*
+         * M3 first supported roaming transition: HPLMN -> VPLMN.
+         *
+         * In this case the source PDU Session Context points at the H-SMF,
+         * and hsmfId is present while vsmfId is absent.  The target AMF
+         * must not install that URI as its live serving SM context; it is
+         * retained as source/anchor metadata while a new V-SMF is selected.
+         */
+        if (inter_plmn) {
+            if (PduSessionContext->hsmf_id &&
+                !PduSessionContext->vsmf_id) {
+                insert_vsmf = true;
+            } else {
+                ogs_error("[%s:%d] Unsupported inter-PLMN SMF transition "
+                        "[hsmf:%s vsmf:%s]",
+                        amf_ue->supi,
+                        PduSessionContext->pdu_session_id,
+                        PduSessionContext->hsmf_id ?
+                            PduSessionContext->hsmf_id : "none",
+                        PduSessionContext->vsmf_id ?
+                            PduSessionContext->vsmf_id : "none");
+                ogs_sbi_header_free(&header);
+                continue;
+            }
+        }
+
         sess = amf_sess_add(amf_ue, PduSessionContext->pdu_session_id);
         ogs_assert(sess);
+
+        memset(&sess->s_nssai, 0, sizeof(sess->s_nssai));
+        sess->s_nssai.sst = PduSessionContext->s_nssai->sst;
+        sess->s_nssai.sd = ogs_s_nssai_sd_from_string(
+                PduSessionContext->s_nssai->sd);
+
+        sess->dnn = ogs_strdup(PduSessionContext->dnn);
+        amf_ue->nas.access_type = (int)PduSessionContext->access_type;
+
+        if (insert_vsmf) {
+            memcpy(&amf_ue->home_plmn_id,
+                    &amf_ue->handover.source_plmn_id,
+                    OGS_PLMN_ID_LEN);
+
+            sess->inter_plmn_handover.pending = true;
+            sess->inter_plmn_handover.source_sm_context_uri =
+                ogs_strdup(PduSessionContext->sm_context_ref);
+            sess->inter_plmn_handover.source_smf_id =
+                ogs_strdup(PduSessionContext->hsmf_id);
+            sess->inter_plmn_handover.source_smf_plmn_id_presence = true;
+            memcpy(&sess->inter_plmn_handover.source_smf_plmn_id,
+                    &amf_ue->handover.source_plmn_id,
+                    OGS_PLMN_ID_LEN);
+            sess->inter_plmn_handover.h_smf_id =
+                ogs_strdup(PduSessionContext->hsmf_id);
+
+            ogs_info("[%s:%d] Inter-PLMN HR handover: retain H-SMF [%s] "
+                    "and insert target V-SMF",
+                    amf_ue->supi, sess->psi,
+                    sess->inter_plmn_handover.h_smf_id);
+
+            ogs_sbi_header_free(&header);
+            continue;
+        }
 
         rc = ogs_sbi_getaddr_from_uri(
                 &scheme, &fqdn, &fqdn_port, &addr, &addr6, header.uri);
         if (rc == false || scheme == OpenAPI_uri_scheme_NULL) {
             ogs_error("[%s:%d] Invalid URI [%s]",
                     amf_ue->supi, sess->psi, header.uri);
-
             ogs_sbi_header_free(&header);
             continue;
         }
@@ -2785,11 +2850,9 @@ static void amf_namf_comm_decode_ue_session_context_list(
                         amf_ue->supi, sess->psi);
 
                 ogs_sbi_header_free(&header);
-
                 ogs_free(fqdn);
                 ogs_freeaddrinfo(addr);
                 ogs_freeaddrinfo(addr6);
-
                 continue;
             }
         }
@@ -2803,15 +2866,6 @@ static void amf_namf_comm_decode_ue_session_context_list(
             ogs_strdup(PduSessionContext->sm_context_ref);
         sess->sm_context_ref =
             ogs_strdup(message.h.resource.component[1]);
-
-        memset(&sess->s_nssai, 0, sizeof(sess->s_nssai));
-
-        sess->s_nssai.sst = PduSessionContext->s_nssai->sst;
-        sess->s_nssai.sd = ogs_s_nssai_sd_from_string(
-                PduSessionContext->s_nssai->sd);
-
-        sess->dnn = ogs_strdup(PduSessionContext->dnn);
-        amf_ue->nas.access_type = (int)PduSessionContext->access_type;
 
         ogs_sbi_header_free(&header);
     }
