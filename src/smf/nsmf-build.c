@@ -456,19 +456,39 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_hsmf_update_data(
         }
     }
 
-    if (sess->nsmf_param.dl_ip.ipv4)
-        vcnTunnelInfo.ipv4_addr = ogs_ipv4_to_string(
-                sess->nsmf_param.dl_ip.addr);
+    if (sess->nsmf_param.request_indication ==
+            OpenAPI_request_indication_PDU_SES_MOB) {
+        /*
+         * Inter-PLMN handover execution: advertise the target V-UPF N9
+         * endpoint selected during preparation.  This is the endpoint the
+         * retained H-UPF must use after the mobility commit.
+         */
+        if (sess->local_dl_addr)
+            vcnTunnelInfo.ipv4_addr =
+                ogs_ipstrdup(sess->local_dl_addr);
+        if (sess->local_dl_addr6)
+            vcnTunnelInfo.ipv6_addr =
+                ogs_ipstrdup(sess->local_dl_addr6);
+        if (sess->local_dl_teid)
+            vcnTunnelInfo.gtp_teid =
+                ogs_uint32_to_0string(sess->local_dl_teid);
+    } else {
+        if (sess->nsmf_param.dl_ip.ipv4)
+            vcnTunnelInfo.ipv4_addr = ogs_ipv4_to_string(
+                    sess->nsmf_param.dl_ip.addr);
 
-    if (sess->nsmf_param.dl_ip.ipv6)
-        vcnTunnelInfo.ipv6_addr = ogs_ipv6addr_to_string(
-                sess->nsmf_param.dl_ip.addr6);
+        if (sess->nsmf_param.dl_ip.ipv6)
+            vcnTunnelInfo.ipv6_addr = ogs_ipv6addr_to_string(
+                    sess->nsmf_param.dl_ip.addr6);
 
-    if (vcnTunnelInfo.ipv4_addr || vcnTunnelInfo.ipv6_addr) {
-        vcnTunnelInfo.gtp_teid = ogs_uint32_to_0string(
-                sess->nsmf_param.dl_teid);
-        HsmfUpdateData.vcn_tunnel_info = &vcnTunnelInfo;
+        if (vcnTunnelInfo.ipv4_addr || vcnTunnelInfo.ipv6_addr)
+            vcnTunnelInfo.gtp_teid = ogs_uint32_to_0string(
+                    sess->nsmf_param.dl_teid);
     }
+
+    if ((vcnTunnelInfo.ipv4_addr || vcnTunnelInfo.ipv6_addr) &&
+        vcnTunnelInfo.gtp_teid)
+        HsmfUpdateData.vcn_tunnel_info = &vcnTunnelInfo;
 
     HsmfUpdateData.an_type = sess->nsmf_param.an_type;
     HsmfUpdateData.rat_type = sess->nsmf_param.rat_type;
