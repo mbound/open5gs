@@ -394,6 +394,86 @@ void smf_sbi_send_sm_context_created_data(
     ogs_free(sendmsg.http.location);
 }
 
+void smf_sbi_send_inter_plmn_handover_sm_context_created(
+        smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_pkbuf_t *n2smbuf)
+{
+    OpenAPI_sm_context_created_data_t SmContextCreatedData;
+    OpenAPI_ref_to_binary_data_t n2SmInfo;
+    OpenAPI_snssai_t sNssai;
+
+    ogs_sbi_server_t *server = NULL;
+    ogs_sbi_header_t header;
+    ogs_sbi_message_t sendmsg;
+    ogs_sbi_response_t *response = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(stream);
+    ogs_assert(n2smbuf);
+    ogs_assert(INTER_PLMN_HANDOVER_IN_VSMF(sess));
+
+    memset(&SmContextCreatedData, 0, sizeof(SmContextCreatedData));
+    memset(&n2SmInfo, 0, sizeof(n2SmInfo));
+    memset(&sNssai, 0, sizeof(sNssai));
+    memset(&sendmsg, 0, sizeof(sendmsg));
+    memset(&header, 0, sizeof(header));
+
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nsmf_pdusession);
+    header.api.version = (char *)OGS_SBI_API_V1;
+    header.resource.component[0] =
+        (char *)OGS_SBI_RESOURCE_NAME_SM_CONTEXTS;
+    header.resource.component[1] = sess->sm_context_ref;
+
+    server = ogs_sbi_server_from_stream(stream);
+    ogs_assert(server);
+    sendmsg.http.location = ogs_sbi_server_uri(server, &header);
+    ogs_assert(sendmsg.http.location);
+
+    /*
+     * TS 29.502 handover preparation: return the new V-SMF context and the
+     * N2 PDU Session Resource Setup Request Transfer while the H-SMF/PSA
+     * remains anchored.
+     */
+    SmContextCreatedData.h_smf_uri = sess->h_smf_uri;
+    SmContextCreatedData.h_smf_instance_id = sess->h_smf_id;
+    SmContextCreatedData.smf_uri = sendmsg.http.location;
+    SmContextCreatedData.smf_instance_id =
+        NF_INSTANCE_ID(ogs_sbi_self()->nf_instance);
+    SmContextCreatedData.is_pdu_session_id = true;
+    SmContextCreatedData.pdu_session_id = sess->psi;
+
+    sNssai.sst = sess->s_nssai.sst;
+    sNssai.sd = ogs_s_nssai_sd_to_string(sess->s_nssai.sd);
+    SmContextCreatedData.s_nssai = &sNssai;
+
+    SmContextCreatedData.up_cnx_state = OpenAPI_up_cnx_state_ACTIVATING;
+    SmContextCreatedData.ho_state = OpenAPI_ho_state_PREPARING;
+
+    n2SmInfo.content_id = (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
+    SmContextCreatedData.n2_sm_info = &n2SmInfo;
+    SmContextCreatedData.n2_sm_info_type =
+        OpenAPI_n2_sm_info_type_PDU_RES_SETUP_REQ;
+
+    sendmsg.part[sendmsg.num_of_part].content_id =
+        (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
+    sendmsg.part[sendmsg.num_of_part].content_type =
+        (char *)OGS_SBI_CONTENT_NGAP_TYPE;
+    sendmsg.part[sendmsg.num_of_part].pkbuf = n2smbuf;
+    sendmsg.num_of_part++;
+
+    sendmsg.SmContextCreatedData = &SmContextCreatedData;
+
+    response = ogs_sbi_build_response(
+            &sendmsg, OGS_SBI_HTTP_STATUS_CREATED);
+    ogs_assert(response);
+    ogs_assert(true == ogs_sbi_server_send_response(stream, response));
+
+    ogs_free(n2smbuf);
+    if (sNssai.sd)
+        ogs_free(sNssai.sd);
+    ogs_free(sendmsg.http.location);
+}
+
 void smf_sbi_send_sm_context_create_error(
         ogs_sbi_stream_t *stream,
         int status, ogs_sbi_app_errno_e err,
