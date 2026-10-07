@@ -19,6 +19,80 @@
 
 #include "nsmf-build.h"
 
+static bool amf_nsmf_add_ntn_tai_info(
+        OpenAPI_nr_location_t *nr_location,
+        const amf_nr_ntn_tai_info_t *ntn_tai)
+{
+    int i;
+    ogs_plmn_id_t serving_plmn;
+    OpenAPI_ntn_tai_info_t *NtnTaiInfo = NULL;
+
+    ogs_assert(nr_location);
+    ogs_assert(ntn_tai);
+
+    if (!ntn_tai->presence)
+        return true;
+
+    NtnTaiInfo = ogs_calloc(1, sizeof(*NtnTaiInfo));
+    if (!NtnTaiInfo)
+        return false;
+
+    memcpy(&serving_plmn, &ntn_tai->serving_plmn, sizeof(serving_plmn));
+    NtnTaiInfo->plmn_id = ogs_sbi_build_plmn_id_nid(&serving_plmn);
+    if (!NtnTaiInfo->plmn_id)
+        goto error;
+
+    NtnTaiInfo->tac_list = OpenAPI_list_create();
+    if (!NtnTaiInfo->tac_list)
+        goto error;
+
+    for (i = 0; i < ntn_tai->num_of_tac; i++) {
+        char *tac = ogs_uint24_to_0string(ntn_tai->tac[i]);
+        if (!tac)
+            goto error;
+        OpenAPI_list_add(NtnTaiInfo->tac_list, tac);
+    }
+
+    if (!NtnTaiInfo->tac_list->count) {
+        ogs_error("NR NTN TAI information has an empty TAC list");
+        goto error;
+    }
+
+    if (ntn_tai->derived_tac_presence) {
+        NtnTaiInfo->derived_tac =
+            ogs_uint24_to_0string(ntn_tai->derived_tac);
+        if (!NtnTaiInfo->derived_tac)
+            goto error;
+    }
+
+    nr_location->ntn_tai_info = NtnTaiInfo;
+    return true;
+
+error:
+    OpenAPI_ntn_tai_info_free(NtnTaiInfo);
+    return false;
+}
+
+static OpenAPI_nr_location_t *amf_nsmf_build_nr_location_with_ntn(
+        ogs_5gs_tai_t *tai, ogs_nr_cgi_t *nr_cgi, amf_ue_t *amf_ue)
+{
+    OpenAPI_nr_location_t *nr_location = NULL;
+
+    ogs_assert(amf_ue);
+
+    nr_location = ogs_sbi_build_nr_location(tai, nr_cgi);
+    if (!nr_location)
+        return NULL;
+
+    if (!amf_nsmf_add_ntn_tai_info(
+            nr_location, &amf_ue->nr_ntn_tai)) {
+        ogs_sbi_free_nr_location(nr_location);
+        return NULL;
+    }
+
+    return nr_location;
+}
+
 ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
         amf_sess_t *sess, void *data)
 {
@@ -35,6 +109,7 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
     OpenAPI_snssai_t sNssai;
     OpenAPI_snssai_t hplmnSnssai;
     OpenAPI_ref_to_binary_data_t n1SmMsg;
+    OpenAPI_ref_to_binary_data_t n2SmInfo;
     OpenAPI_user_location_t ueLocation;
     ogs_sbi_nf_instance_t *pcf_nf_instance = NULL;
 
@@ -54,6 +129,8 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
     memset(&SmContextCreateData, 0, sizeof(SmContextCreateData));
     memset(&sNssai, 0, sizeof(sNssai));
     memset(&hplmnSnssai, 0, sizeof(hplmnSnssai));
+    memset(&n1SmMsg, 0, sizeof(n1SmMsg));
+    memset(&n2SmInfo, 0, sizeof(n2SmInfo));
     memset(&header, 0, sizeof(header));
     memset(&ueLocation, 0, sizeof(ueLocation));
 
@@ -146,14 +223,15 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
             OpenAPI_request_type_EXISTING_EMERGENCY_PDU_SESSION)
         SmContextCreateData.request_type = sess->request_type;
 
-    n1SmMsg.content_id = (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
-    SmContextCreateData.n1_sm_msg = &n1SmMsg;
+    if (!sess->inter_plmn_handover.pending) {
+        n1SmMsg.content_id = (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
+        SmContextCreateData.n1_sm_msg = &n1SmMsg;
+    }
 
     SmContextCreateData.an_type = amf_ue->nas.access_type;
     SmContextCreateData.rat_type = amf_ue_rat_type(amf_ue);
 
-    ueLocation.nr_location = ogs_sbi_build_nr_location(
-            &amf_ue->nr_tai, &amf_ue->nr_cgi);
+    ueLocation.nr_location = amf_nsmf_build_nr_location_with_ntn(\n            &amf_ue->nr_tai, &amf_ue->nr_cgi, amf_ue);
     if (!ueLocation.nr_location) {
         ogs_error("No ueLocation.nr_location");
         goto end;
@@ -218,6 +296,55 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
         }
     }
 
+    if (sess->inter_plmn_handover.pending) {
+        ogs_assert(sess->inter_plmn_handover.source_sm_context_uri);
+        ogs_assert(sess->inter_plmn_handover.source_smf_id);
+        ogs_assert(sess->inter_plmn_handover.source_smf_plmn_id_presence);
+        ogs_assert(sess->inter_plmn_handover.handover_required);
+        ogs_assert(sess->inter_plmn_handover.target_id);
+
+        /*
+         * TS 29.502 V-SMF insertion/change during N2 handover.
+         * The new visited SM context is created with a reference to the
+         * source SM context while the retained H-SMF remains the HR anchor.
+         */
+        SmContextCreateData.sm_context_ref =
+            sess->inter_plmn_handover.source_sm_context_uri;
+        SmContextCreateData.sm_context_smf_id =
+            sess->inter_plmn_handover.source_smf_id;
+        SmContextCreateData.sm_context_smf_plmn_id =
+            ogs_sbi_build_plmn_id_nid(
+                    &sess->inter_plmn_handover.source_smf_plmn_id);
+        if (!SmContextCreateData.sm_context_smf_plmn_id) {
+            ogs_error("[%s:%d] Cannot build source SMF PLMN",
+                    amf_ue->supi, sess->psi);
+            goto end;
+        }
+
+        SmContextCreateData.ho_state = OpenAPI_ho_state_PREPARING;
+        SmContextCreateData.target_id =
+            OpenAPI_ng_ran_target_id_copy(
+                    NULL, sess->inter_plmn_handover.target_id);
+        if (!SmContextCreateData.target_id) {
+            ogs_error("[%s:%d] Cannot copy handover TargetID",
+                    amf_ue->supi, sess->psi);
+            goto end;
+        }
+
+        n2SmInfo.content_id = (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
+        SmContextCreateData.n2_sm_info = &n2SmInfo;
+        SmContextCreateData.n2_sm_info_type =
+            OpenAPI_n2_sm_info_type_HANDOVER_REQUIRED;
+
+        message.part[message.num_of_part].pkbuf =
+            sess->inter_plmn_handover.handover_required;
+        message.part[message.num_of_part].content_id =
+            (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
+        message.part[message.num_of_part].content_type =
+            (char *)OGS_SBI_CONTENT_NGAP_TYPE;
+        message.num_of_part++;
+    }
+
     /*
      * We're experiencing an issue after changing SearchResult.validityTime
      * from 3600 seconds to 30 seconds. (#3210)
@@ -240,13 +367,15 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
 
     message.SmContextCreateData = &SmContextCreateData;
 
-    message.part[message.num_of_part].pkbuf = sess->payload_container;
-    if (message.part[message.num_of_part].pkbuf) {
-        message.part[message.num_of_part].content_id =
-            (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
-        message.part[message.num_of_part].content_type =
-            (char *)OGS_SBI_CONTENT_5GNAS_TYPE;
-        message.num_of_part++;
+    if (!sess->inter_plmn_handover.pending) {
+        message.part[message.num_of_part].pkbuf = sess->payload_container;
+        if (message.part[message.num_of_part].pkbuf) {
+            message.part[message.num_of_part].content_id =
+                (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
+            message.part[message.num_of_part].content_type =
+                (char *)OGS_SBI_CONTENT_5GNAS_TYPE;
+            message.num_of_part++;
+        }
     }
 
     message.http.accept = (char *)(OGS_SBI_CONTENT_JSON_TYPE ","
@@ -290,6 +419,12 @@ end:
 
     if (SmContextCreateData.h_smf_uri)
         ogs_free(SmContextCreateData.h_smf_uri);
+    if (SmContextCreateData.sm_context_smf_plmn_id)
+        ogs_sbi_free_plmn_id_nid(
+                SmContextCreateData.sm_context_smf_plmn_id);
+    if (SmContextCreateData.target_id)
+        OpenAPI_ng_ran_target_id_free(
+                SmContextCreateData.target_id);
 
     if (message.http.custom.nrf_uri)
         ogs_free(message.http.custom.nrf_uri);
@@ -373,6 +508,18 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_update_sm_context(
             ogs_error("No target_id");
             goto end;
         }
+    } else if (param->targetId) {
+        /*
+         * Target-AMF CreateUEContext already carries the TS 29.518
+         * NgRanTargetId representation.  Reuse it when updating the SMF
+         * instead of needlessly round-tripping through NGAP ASN.1.
+         */
+        SmContextUpdateData.target_id =
+            OpenAPI_ng_ran_target_id_copy(NULL, param->targetId);
+        if (!SmContextUpdateData.target_id) {
+            ogs_error("Cannot copy target_id");
+            goto end;
+        }
     }
 
     if (param->ngApCause.group) {
@@ -383,8 +530,7 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_update_sm_context(
     }
 
     if (param->ue_location) {
-        ueLocation.nr_location = ogs_sbi_build_nr_location(
-                &amf_ue->nr_tai, &amf_ue->nr_cgi);
+        ueLocation.nr_location = amf_nsmf_build_nr_location_with_ntn(\n            &amf_ue->nr_tai, &amf_ue->nr_cgi, amf_ue);
         if (!ueLocation.nr_location) {
             ogs_error("No ueLocation.nr_location");
             goto end;
@@ -424,7 +570,7 @@ end:
     if (SmContextUpdateData.ue_time_zone)
         ogs_free(SmContextUpdateData.ue_time_zone);
     if (SmContextUpdateData.target_id)
-        amf_nsmf_pdusession_free_target_id(SmContextUpdateData.target_id);
+        OpenAPI_ng_ran_target_id_free(SmContextUpdateData.target_id);
 
     return request;
 }
@@ -479,8 +625,7 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_release_sm_context(
     }
 
     if (param->ue_location) {
-        ueLocation.nr_location = ogs_sbi_build_nr_location(
-                &amf_ue->nr_tai, &amf_ue->nr_cgi);
+        ueLocation.nr_location = amf_nsmf_build_nr_location_with_ntn(\n            &amf_ue->nr_tai, &amf_ue->nr_cgi, amf_ue);
         if (!ueLocation.nr_location) {
             ogs_error("No ueLocation.nr_location");
             goto end;
@@ -674,7 +819,8 @@ OpenAPI_ng_ran_target_id_t *amf_nsmf_pdusession_build_target_id(
             gNB_ID->choice.gNB_ID.size,
             gNbId->g_nb_value,
             OGS_KEYSTRLEN(gNB_ID->choice.gNB_ID.size));
-    gNbId->bit_length = 32 - gNB_ID->choice.gNB_ID.bits_unused;
+    gNbId->bit_length =
+        gNB_ID->choice.gNB_ID.size * 8 - gNB_ID->choice.gNB_ID.bits_unused;
 
     targetId->tai = tai = ogs_calloc(1, sizeof(*tai));;
     if (!targetId->tai) {

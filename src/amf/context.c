@@ -1811,8 +1811,12 @@ amf_ue_t *amf_ue_add(ran_ue_t *ran_ue)
     memcpy(&amf_ue->nr_tai, &ran_ue->saved.nr_tai, sizeof(ogs_5gs_tai_t));
     memcpy(&amf_ue->nr_cgi, &ran_ue->saved.nr_cgi, sizeof(ogs_nr_cgi_t));
     amf_ue->nr_cgi_gnb_id_length = ran_ue->saved.nr_cgi_gnb_id_length;
+    memcpy(&amf_ue->nr_ntn_tai, &ran_ue->saved.nr_ntn_tai,
+            sizeof(amf_ue->nr_ntn_tai));
 
     amf_ue->guami = &amf_self()->served_guami[0];
+    amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
+    amf_ue->handover.release_ue_context_stream_id = OGS_INVALID_POOL_ID;
     amf_ue->nas.access_type = OGS_ACCESS_TYPE_3GPP;
     amf_ue->nas.amf.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
     amf_ue->abba_len = 2;
@@ -1910,6 +1914,10 @@ void amf_ue_remove(amf_ue_t *amf_ue)
 
     /* Clear Transparent Container */
     OGS_ASN_CLEAR_DATA(&amf_ue->handover.container);
+    if (amf_ue->handover.n2_notify_uri)
+        ogs_free(amf_ue->handover.n2_notify_uri);
+    if (amf_ue->handover.target_ue_context_uri)
+        ogs_free(amf_ue->handover.target_ue_context_uri);
 
     /* Delete All Timers */
     CLEAR_AMF_UE_ALL_TIMERS(amf_ue);
@@ -2634,6 +2642,20 @@ void amf_sess_remove(amf_sess_t *sess)
 
     if (sess->sm_context.client)
         ogs_sbi_client_remove(sess->sm_context.client);
+
+    if (sess->inter_plmn_handover.source_sm_context_uri)
+        ogs_free(sess->inter_plmn_handover.source_sm_context_uri);
+    if (sess->inter_plmn_handover.source_smf_id)
+        ogs_free(sess->inter_plmn_handover.source_smf_id);
+    if (sess->inter_plmn_handover.h_smf_id)
+        ogs_free(sess->inter_plmn_handover.h_smf_id);
+    if (sess->inter_plmn_handover.v_smf_id)
+        ogs_free(sess->inter_plmn_handover.v_smf_id);
+    if (sess->inter_plmn_handover.handover_required)
+        ogs_pkbuf_free(sess->inter_plmn_handover.handover_required);
+    if (sess->inter_plmn_handover.target_id)
+        OpenAPI_ng_ran_target_id_free(
+                sess->inter_plmn_handover.target_id);
 
     if (sess->payload_container)
         ogs_pkbuf_free(sess->payload_container);

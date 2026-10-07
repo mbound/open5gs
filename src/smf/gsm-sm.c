@@ -381,7 +381,11 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                         break;
                     }
 
-                    if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
+                    if (INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+                        ogs_info("[%s:%d] SMContextCreate inter-PLMN "
+                                "handover: waiting for RetrieveSMContext",
+                                smf_ue->supi, sess->psi);
+                    } else if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
                         ogs_info("[%s:%d] SMContextCreate HR Roaming in V-SMF",
                                 smf_ue->supi, sess->psi);
                         OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_establishment);
@@ -435,6 +439,52 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
         }
+        break;
+
+    case OGS_EVENT_SBI_CLIENT:
+        sbi_message = e->h.sbi.message;
+        ogs_assert(sbi_message);
+
+        smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+        ogs_assert(smf_ue);
+
+        stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
+        if (stream_id >= OGS_MIN_POOL_ID &&
+            stream_id <= OGS_MAX_POOL_ID)
+            stream = ogs_sbi_stream_find_by_id(stream_id);
+
+        if (e->h.sbi.state != SMF_CREATE_STATE_INTER_PLMN_HANDOVER ||
+            !INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+            ogs_error("[%s:%d] Unexpected SBI client response in initial "
+                    "state [state:%d]",
+                    smf_ue->supi, sess->psi, e->h.sbi.state);
+            OGS_FSM_TRAN(s, smf_gsm_state_exception);
+            break;
+        }
+
+        if (!stream) {
+            ogs_error("[%s:%d] AMF CreateSMContext stream is gone",
+                    smf_ue->supi, sess->psi);
+            OGS_FSM_TRAN(s, smf_gsm_state_exception);
+            break;
+        }
+
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        if (service_name_id != OpenAPI_service_name_nsmf_pdusession ||
+            smf_nsmf_handle_retrieved_sm_context_in_vsmf(
+                    sess, stream, sbi_message) == false) {
+            ogs_error("[%s:%d] Inter-PLMN RetrieveSMContext handling failed",
+                    smf_ue->supi, sess->psi);
+            ogs_assert(true == ogs_sbi_server_send_error(
+                    stream, OGS_SBI_HTTP_STATUS_BAD_GATEWAY,
+                    sbi_message, "RetrieveSMContext failed",
+                    smf_ue->supi, NULL));
+            OGS_FSM_TRAN(s, smf_gsm_state_exception);
+            break;
+        }
+
+        OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_establishment);
         break;
 
     case SMF_EVT_5GSM_MESSAGE:
@@ -978,7 +1028,21 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                     OGS_FSM_TRAN(s, smf_gsm_state_5gc_n1_n2_reject);
                     return;
                 }
-                if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
+                if (INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+                    /*
+                     * The visited N9 leg is ready.  Ask the retained H-SMF
+                     * to prepare the same anchor PDU session for the new
+                     * V-SMF.  Keep the target-AMF CreateSMContext stream
+                     * associated with this SBI transaction.
+                     */
+                    r = smf_sbi_discover_and_send(
+                            OpenAPI_service_name_nsmf_pdusession, NULL,
+                            smf_nsmf_pdusession_build_create_data,
+                            sess, stream,
+                            SMF_CREATE_STATE_INTER_PLMN_HANDOVER, NULL);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                } else if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
                     r = smf_sbi_discover_and_send(
                             OpenAPI_service_name_nsmf_pdusession, NULL,
                             smf_nsmf_pdusession_build_create_data,
@@ -1230,6 +1294,12 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     smf_nsmf_handle_update_sm_context(
                             sess, stream, sbi_message);
                     break;
+                CASE(OGS_SBI_RESOURCE_NAME_RETRIEVE)
+                    if (smf_nsmf_handle_retrieve_sm_context(
+                            sess, stream, sbi_message) == false) {
+                        ogs_error("smf_nsmf_handle_retrieve_sm_context() failed");
+                    }
+                    break;
                 CASE(OGS_SBI_RESOURCE_NAME_RELEASE)
     /*
      * Network-requested PDU Session Release
@@ -1455,6 +1525,114 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                         "missing upCnxState and pfcp_flags");
                             }
                             break;
+                        case OpenAPI_request_indication_PDU_SES_MOB:
+                            /*
+                             * HPLMN -> VPLMN HR handover execution/cancel.
+                             * Preparation staged the target V-SMF/V-UPF N9
+                             * endpoint. hoPreparationIndication=false marks
+                             * execution, cancel or failure per TS 29.502.
+                             */
+                            if (!INTER_PLMN_HANDOVER_PREP_IN_HSMF(sess)) {
+                                hsmf_update_send_bad_request(
+                                        stream, sbi_message, sess,
+                                        "No staged inter-PLMN handover");
+                                break;
+                            }
+
+                            if (!sess->nsmf_param.
+                                    ho_preparation_indication_presence ||
+                                sess->nsmf_param.
+                                    ho_preparation_indication) {
+                                hsmf_update_send_bad_request(
+                                        stream, sbi_message, sess,
+                                        "Invalid hoPreparationIndication");
+                                break;
+                            }
+
+                            /*
+                             * No V-CN tunnel means Relocation Cancel:
+                             * discard only the staged target path. The active
+                             * H-UPF/PSA and its source-side path remain intact.
+                             */
+                            if (!sess->nsmf_param.dl_teid) {
+                                if (sess->hsmf_handover.target_vsmf_id) {
+                                    ogs_free(sess->hsmf_handover.
+                                        target_vsmf_id);
+                                    sess->hsmf_handover.target_vsmf_id = NULL;
+                                }
+                                if (sess->hsmf_handover.
+                                        target_vsmf_pdu_session_uri) {
+                                    ogs_free(sess->hsmf_handover.
+                                        target_vsmf_pdu_session_uri);
+                                    sess->hsmf_handover.
+                                        target_vsmf_pdu_session_uri = NULL;
+                                }
+                                memset(&sess->hsmf_handover.target_vcn_ip, 0,
+                                        sizeof(sess->hsmf_handover.
+                                            target_vcn_ip));
+                                sess->hsmf_handover.target_vcn_teid = 0;
+                                sess->hsmf_handover.pending = false;
+
+                                ogs_assert(true ==
+                                    ogs_sbi_send_http_status_no_content(
+                                        stream));
+                                ogs_info("[%d] Inter-PLMN HR handover "
+                                        "preparation cancelled", sess->psi);
+                                break;
+                            }
+
+                            if (sess->nsmf_param.dl_teid !=
+                                    sess->hsmf_handover.target_vcn_teid ||
+                                memcmp(&sess->nsmf_param.dl_ip,
+                                    &sess->hsmf_handover.target_vcn_ip,
+                                    sizeof(sess->nsmf_param.dl_ip)) != 0) {
+                                hsmf_update_send_bad_request(
+                                        stream, sbi_message, sess,
+                                        "Target V-CN endpoint mismatch");
+                                break;
+                            }
+
+                            ogs_list_for_each(
+                                    &sess->bearer_list, qos_flow) {
+                                ogs_pfcp_far_t *dl_far = qos_flow->dl_far;
+                                ogs_pfcp_pdr_t *ul_pdr = qos_flow->ul_pdr;
+
+                                ogs_assert(dl_far);
+                                ogs_assert(ul_pdr);
+
+                                /*
+                                 * The same H-UPF PDR/FAR pair previously
+                                 * terminated N3. After inter-PLMN mobility
+                                 * it terminates roaming N9 toward the V-UPF.
+                                 */
+                                ul_pdr->src_if_type_presence = true;
+                                ul_pdr->src_if_type =
+                                    OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING;
+
+                                dl_far->dst_if_type_presence = true;
+                                dl_far->dst_if_type =
+                                    OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING;
+                                dl_far->apply_action =
+                                    OGS_PFCP_APPLY_ACTION_FORW;
+
+                                ogs_assert(OGS_OK ==
+                                    ogs_pfcp_ip_to_outer_header_creation(
+                                        &sess->hsmf_handover.target_vcn_ip,
+                                        &dl_far->outer_header_creation,
+                                        &dl_far->outer_header_creation_len));
+                                dl_far->outer_header_creation.teid =
+                                    sess->hsmf_handover.target_vcn_teid;
+                            }
+
+                            ogs_assert(OGS_OK ==
+                                smf_5gc_pfcp_send_all_pdr_modification_request(
+                                    sess, stream,
+                                    OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
+                                    OGS_PFCP_MODIFY_DL_ONLY|
+                                    OGS_PFCP_MODIFY_ACTIVATE,
+                                    0, 0));
+                            break;
+
                         case OpenAPI_request_indication_UE_REQ_PDU_SES_REL:
                         case OpenAPI_request_indication_NW_REQ_PDU_SES_REL:
                             if (sess->nsmf_param.request_indication ==
@@ -1588,14 +1766,26 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
                     break;
                 DEFAULT
-                    ogs_error("Invalid resource name [%s]",
+                    if (sbi_message->PduSessionCreateData &&
+                        sbi_message->PduSessionCreateData->
+                            is_ho_preparation_indication &&
+                        sbi_message->PduSessionCreateData->
+                            ho_preparation_indication) {
+                        if (smf_nsmf_handle_create_data_in_hsmf(
+                                sess, stream, sbi_message) == false) {
+                            ogs_error("[%s:%d] H-SMF handover preparation "
+                                    "Create failed",
+                                    smf_ue->supi, sess->psi);
+                        }
+                    } else {
+                        ogs_error("Invalid resource name [%s]",
                                 sbi_message->h.resource.component[2]);
-                    ogs_assert(true ==
-                        ogs_sbi_server_send_error(stream,
-                            OGS_SBI_HTTP_STATUS_BAD_REQUEST, sbi_message,
-                            "Invalid resource name [%s]",
-                            sbi_message->h.resource.component[2], NULL));
-                    OGS_FSM_TRAN(s, smf_gsm_state_exception);
+                        ogs_assert(true ==
+                            ogs_sbi_server_send_error(stream,
+                                OGS_SBI_HTTP_STATUS_BAD_REQUEST, sbi_message,
+                                "Invalid resource name [%s]",
+                                sbi_message->h.resource.component[2], NULL));
+                    }
                 END
                 break;
 
@@ -1888,6 +2078,92 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                             smf_sbi_send_sm_context_updated_data_ho_state(
                                     sess, stream, OpenAPI_ho_state_COMPLETED);
                             break;
+                        case SMF_UPDATE_STATE_INTER_PLMN_HO_COMMIT:
+                            if (sbi_message->res_status !=
+                                    OGS_SBI_HTTP_STATUS_NO_CONTENT &&
+                                sbi_message->res_status !=
+                                    OGS_SBI_HTTP_STATUS_OK) {
+                                ogs_error("[%s:%d] H-SMF mobility commit "
+                                        "failed [HTTP:%d]",
+                                        smf_ue->supi, sess->psi,
+                                        sbi_message->res_status);
+                                smf_sbi_send_sm_context_update_error_log(
+                                        stream,
+                                        OGS_SBI_HTTP_STATUS_BAD_GATEWAY,
+                                        "H-SMF mobility commit failed",
+                                        NULL);
+                                break;
+                            }
+                            /*
+                             * The retained H-SMF/H-UPF has committed the
+                             * target V-UPF N9 path. Only now may the V-SMF
+                             * complete HandoverNotify towards the target AMF.
+                             */
+                            sess->up_cnx_state =
+                                OpenAPI_up_cnx_state_ACTIVATED;
+
+                            sess->inter_plmn_handover.pending = false;
+                            if (sess->inter_plmn_handover.
+                                    source_sm_context_uri) {
+                                ogs_free(sess->inter_plmn_handover.
+                                    source_sm_context_uri);
+                                sess->inter_plmn_handover.
+                                    source_sm_context_uri = NULL;
+                            }
+                            if (sess->inter_plmn_handover.source_smf_id) {
+                                ogs_free(sess->inter_plmn_handover.
+                                    source_smf_id);
+                                sess->inter_plmn_handover.source_smf_id = NULL;
+                            }
+                            if (sess->inter_plmn_handover.target_id) {
+                                OpenAPI_ng_ran_target_id_free(
+                                    sess->inter_plmn_handover.target_id);
+                                sess->inter_plmn_handover.target_id = NULL;
+                            }
+                            if (sess->inter_plmn_handover.handover_required) {
+                                ogs_pkbuf_free(sess->inter_plmn_handover.
+                                    handover_required);
+                                sess->inter_plmn_handover.
+                                    handover_required = NULL;
+                            }
+
+                            smf_sbi_send_sm_context_updated_data_ho_state(
+                                    sess, stream, OpenAPI_ho_state_COMPLETED);
+                            ogs_info("[%d] Inter-PLMN HR handover committed",
+                                    sess->psi);
+                            break;
+                        case SMF_UPDATE_STATE_INTER_PLMN_HO_CANCEL:
+                            if (sbi_message->res_status !=
+                                    OGS_SBI_HTTP_STATUS_NO_CONTENT &&
+                                sbi_message->res_status !=
+                                    OGS_SBI_HTTP_STATUS_OK) {
+                                ogs_error("[%s:%d] H-SMF handover cancel "
+                                        "failed [HTTP:%d]",
+                                        smf_ue->supi, sess->psi,
+                                        sbi_message->res_status);
+                                smf_sbi_send_sm_context_update_error_log(
+                                        stream,
+                                        OGS_SBI_HTTP_STATUS_BAD_GATEWAY,
+                                        "H-SMF handover cancel failed",
+                                        NULL);
+                                break;
+                            }
+                            /*
+                             * H-SMF discarded the staged target N9 path.
+                             * Acknowledge relocation cancel to the AMF, then
+                             * delete the temporary target V-UPF/V-SMF session
+                             * locally. The H-SMF/H-UPF anchor stays active.
+                             */
+                            sess->inter_plmn_handover.pending = false;
+                            smf_sbi_send_sm_context_updated_data_ho_state(
+                                    sess, stream,
+                                    OpenAPI_ho_state_CANCELLED);
+
+                            e->h.sbi.state =
+                                OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED;
+                            OGS_FSM_TRAN(
+                                    s, smf_gsm_state_wait_pfcp_deletion);
+                            break;
                         case SMF_UPDATE_STATE_UE_REQ_MOD:
                             /*
                              * AMF stream was stored when HsmfUpdateData
@@ -1914,6 +2190,24 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                     smf_ue->supi, sess->psi,
                                     sbi_message->res_status);
                             OGS_FSM_TRAN(s, smf_gsm_state_exception);
+                        } else if (e->h.sbi.state ==
+                                SMF_CREATE_STATE_INTER_PLMN_HANDOVER &&
+                                INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+                            /*
+                             * H-SMF preparation succeeded. The target V-SMF
+                             * owns the target N3/V-UPF leg, so it generates
+                             * the N2 resource setup transfer returned to the
+                             * target AMF.
+                             */
+                            n2smbuf =
+                                ngap_build_pdu_session_resource_setup_request_transfer(
+                                        sess);
+                            ogs_assert(n2smbuf);
+
+                            sess->up_cnx_state =
+                                OpenAPI_up_cnx_state_ACTIVATING;
+                            smf_sbi_send_inter_plmn_handover_sm_context_created(
+                                    sess, stream, n2smbuf);
                         }
                     END
                     break;

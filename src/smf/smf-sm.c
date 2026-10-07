@@ -554,6 +554,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     SWITCH(sbi_message.h.resource.component[2])
                     CASE(OGS_SBI_RESOURCE_NAME_MODIFY)
                     CASE(OGS_SBI_RESOURCE_NAME_RELEASE)
+                    CASE(OGS_SBI_RESOURCE_NAME_RETRIEVE)
                         if (!sbi_message.h.resource.component[1]) {
                             ogs_error("No smContextRef [%s]",
                                     sbi_message.h.resource.component[1]);

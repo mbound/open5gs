@@ -29,6 +29,8 @@ bool smf_nsmf_handle_create_sm_context(
     smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *message)
 {
     bool rc;
+    bool inter_plmn_handover = false;
+    int r;
     smf_ue_t *smf_ue = NULL;
     smf_bearer_t *qos_flow = NULL;
     ogs_pfcp_pdr_t *dl_pdr = NULL;
@@ -50,6 +52,8 @@ bool smf_nsmf_handle_create_sm_context(
     OpenAPI_snssai_t *sNssai = NULL;
     OpenAPI_plmn_id_nid_t *servingNetwork = NULL;
     OpenAPI_ref_to_binary_data_t *n1SmMsg = NULL;
+    OpenAPI_ref_to_binary_data_t *n2SmInfo = NULL;
+    ogs_pkbuf_t *n2smbuf = NULL;
 
     ogs_assert(stream);
     ogs_assert(message);
@@ -68,45 +72,88 @@ bool smf_nsmf_handle_create_sm_context(
         return false;
     }
 
-    n1SmMsg = SmContextCreateData->n1_sm_msg;
-    if (!n1SmMsg || !n1SmMsg->content_id) {
-        ogs_error("[%s:%d] No n1SmMsg", smf_ue->supi, sess->psi);
-        smf_sbi_send_sm_context_create_error(stream,
-                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
-                "No n1SmMsg", smf_ue->supi, NULL);
-        return false;
-    }
+    /*
+     * A target V-SMF insertion/change during inter-PLMN N2 handover carries
+     * an existing source SM context and HandoverRequired N2 SM information,
+     * not a new PDU Session Establishment Request in N1.
+     */
+    inter_plmn_handover =
+        SmContextCreateData->sm_context_ref &&
+        SmContextCreateData->sm_context_smf_id &&
+        SmContextCreateData->sm_context_smf_plmn_id &&
+        SmContextCreateData->ho_state == OpenAPI_ho_state_PREPARING &&
+        SmContextCreateData->target_id &&
+        SmContextCreateData->n2_sm_info &&
+        SmContextCreateData->n2_sm_info_type ==
+            OpenAPI_n2_sm_info_type_HANDOVER_REQUIRED;
 
-    n1smbuf = ogs_sbi_find_part_by_content_id(message, n1SmMsg->content_id);
-    if (!n1smbuf) {
-        ogs_error("[%s:%d] No N1 SM Content [%s]",
-                smf_ue->supi, sess->psi, n1SmMsg->content_id);
-        smf_sbi_send_sm_context_create_error(stream,
-                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
-                "No N1 SM Content", smf_ue->supi, NULL);
-        return false;
-    }
+    if (inter_plmn_handover) {
+        n2SmInfo = SmContextCreateData->n2_sm_info;
+        if (!n2SmInfo->content_id) {
+            ogs_error("[%s:%d] No HandoverRequired content-id",
+                    smf_ue->supi, sess->psi);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    "No HandoverRequired content-id", smf_ue->supi, NULL);
+            return false;
+        }
 
-    if (n1smbuf->len < sizeof(ogs_nas_5gsm_header_t)) {
-        ogs_error("[%s:%d] N1 SM Content too short [%d]",
-                smf_ue->supi, sess->psi, n1smbuf->len);
-        smf_sbi_send_sm_context_create_error(stream,
-                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
-                "N1 SM Content too short", smf_ue->supi, NULL);
-        return false;
-    }
+        n2smbuf = ogs_sbi_find_part_by_content_id(
+                message, n2SmInfo->content_id);
+        if (!n2smbuf) {
+            ogs_error("[%s:%d] No HandoverRequired N2 SM Content [%s]",
+                    smf_ue->supi, sess->psi, n2SmInfo->content_id);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    "No HandoverRequired N2 SM Content",
+                    smf_ue->supi, NULL);
+            return false;
+        }
 
-    gsm_header = (ogs_nas_5gsm_header_t *)n1smbuf->data;
-    ogs_assert(gsm_header);
+        sess->pti = OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED;
+    } else {
+        n1SmMsg = SmContextCreateData->n1_sm_msg;
+        if (!n1SmMsg || !n1SmMsg->content_id) {
+            ogs_error("[%s:%d] No n1SmMsg", smf_ue->supi, sess->psi);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                    "No n1SmMsg", smf_ue->supi, NULL);
+            return false;
+        }
 
-    sess->pti = gsm_header->procedure_transaction_identity;
-    if (sess->pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
-        ogs_error("[%s:%d] No PTI", smf_ue->supi, sess->psi);
-        smf_sbi_send_sm_context_create_error(stream,
-                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
-                "No PTI", smf_ue->supi, NULL);
-        return false;
+        n1smbuf = ogs_sbi_find_part_by_content_id(
+                message, n1SmMsg->content_id);
+        if (!n1smbuf) {
+            ogs_error("[%s:%d] No N1 SM Content [%s]",
+                    smf_ue->supi, sess->psi, n1SmMsg->content_id);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                    "No N1 SM Content", smf_ue->supi, NULL);
+            return false;
+        }
 
+        if (n1smbuf->len < sizeof(ogs_nas_5gsm_header_t)) {
+            ogs_error("[%s:%d] N1 SM Content too short [%d]",
+                    smf_ue->supi, sess->psi, n1smbuf->len);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                    "N1 SM Content too short", smf_ue->supi, NULL);
+            return false;
+        }
+
+        gsm_header = (ogs_nas_5gsm_header_t *)n1smbuf->data;
+        ogs_assert(gsm_header);
+
+        sess->pti = gsm_header->procedure_transaction_identity;
+        if (sess->pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+            ogs_error("[%s:%d] No PTI", smf_ue->supi, sess->psi);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                    "No PTI", smf_ue->supi, NULL);
+            return false;
+        }
     }
 
     if (!SmContextCreateData->dnn) {
@@ -431,6 +478,13 @@ bool smf_nsmf_handle_create_sm_context(
     }
 
     if (SmContextCreateData->h_smf_uri) {
+        if (SmContextCreateData->h_smf_id) {
+            if (sess->h_smf_id)
+                ogs_free(sess->h_smf_id);
+            sess->h_smf_id = ogs_strdup(SmContextCreateData->h_smf_id);
+            ogs_assert(sess->h_smf_id);
+        }
+
         if (sess->h_smf_uri) ogs_free(sess->h_smf_uri);
         sess->h_smf_uri = ogs_strdup(SmContextCreateData->h_smf_uri);
         ogs_assert(sess->h_smf_uri);
@@ -462,6 +516,78 @@ bool smf_nsmf_handle_create_sm_context(
         ogs_free(fqdn);
         ogs_freeaddrinfo(addr);
         ogs_freeaddrinfo(addr6);
+    }
+
+    if (inter_plmn_handover) {
+        /*
+         * Target V-SMF insertion/change.  Preserve the source anchor
+         * reference and the N2 HandoverRequired transfer while the complete
+         * SM context is retrieved asynchronously from the source/H-SMF.
+         */
+        if (!HOME_ROUTED_ROAMING_IN_VSMF(sess) ||
+            !SmContextCreateData->h_smf_id) {
+            ogs_error("[%s:%d] Inter-PLMN handover requires retained H-SMF",
+                    smf_ue->supi, sess->psi);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    "Inter-PLMN handover requires retained H-SMF",
+                    smf_ue->supi, NULL);
+            return false;
+        }
+
+        sess->inter_plmn_handover.pending = true;
+        sess->inter_plmn_handover.source_sm_context_uri =
+            ogs_strdup(SmContextCreateData->sm_context_ref);
+        sess->inter_plmn_handover.source_smf_id =
+            ogs_strdup(SmContextCreateData->sm_context_smf_id);
+        ogs_assert(sess->inter_plmn_handover.source_sm_context_uri);
+        ogs_assert(sess->inter_plmn_handover.source_smf_id);
+
+        if (!ogs_sbi_parse_plmn_id_nid(
+                &sess->inter_plmn_handover.source_smf_plmn_id,
+                SmContextCreateData->sm_context_smf_plmn_id)) {
+            ogs_error("[%s:%d] Invalid source SMF PLMN",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        sess->inter_plmn_handover.target_id =
+            OpenAPI_ng_ran_target_id_copy(
+                    NULL, SmContextCreateData->target_id);
+        if (!sess->inter_plmn_handover.target_id) {
+            ogs_error("[%s:%d] Cannot retain targetId",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        sess->inter_plmn_handover.handover_required =
+            ogs_pkbuf_copy(n2smbuf);
+        if (!sess->inter_plmn_handover.handover_required) {
+            ogs_error("[%s:%d] Cannot retain HandoverRequired transfer",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        /*
+         * The source SM context URI is explicit, so the generic SBI path
+         * targets that H-SMF directly (and uses SEPP when the authority is
+         * inter-PLMN).  Keep the inbound AMF stream associated with the
+         * transaction until RetrieveSMContext completes.
+         */
+        r = smf_sbi_discover_and_send(
+                OpenAPI_service_name_nsmf_pdusession, NULL,
+                smf_nsmf_pdusession_build_retrieve_sm_context,
+                sess, stream, SMF_CREATE_STATE_INTER_PLMN_HANDOVER, NULL);
+        if (r != OGS_OK) {
+            ogs_error("[%s:%d] Cannot retrieve source SM context",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        ogs_info("[%s:%d] Inter-PLMN V-SMF insertion: "
+                "RetrieveSMContext started", smf_ue->supi, sess->psi);
+        return true;
     }
 
     if (!HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
@@ -584,6 +710,348 @@ bool smf_nsmf_handle_create_sm_context(
 
     ogs_assert(OGS_OK ==
             smf_5gc_pfcp_send_session_establishment_request(sess, NULL, 0));
+
+    return true;
+}
+
+bool smf_nsmf_handle_retrieved_sm_context_in_vsmf(
+    smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
+{
+    int rv;
+    smf_ue_t *smf_ue = NULL;
+    OpenAPI_sm_context_retrieved_data_t *RetrievedData = NULL;
+    OpenAPI_sm_context_t *SmContext = NULL;
+    OpenAPI_tunnel_info_t *psaTunnelInfo = NULL;
+    OpenAPI_ambr_t *sessionAmbr = NULL;
+    OpenAPI_lnode_t *node = NULL;
+    OpenAPI_list_t *qosFlowsSetupList = NULL;
+    smf_bearer_t *qos_flow = NULL;
+    ogs_pfcp_pdr_t *dl_pdr = NULL;
+    ogs_pfcp_pdr_t *ul_pdr = NULL;
+    ogs_pfcp_far_t *ul_far = NULL;
+    ogs_ip_t ue_ip;
+    uint8_t prefixlen = 0;
+
+    ogs_assert(sess);
+    ogs_assert(stream);
+    ogs_assert(recvmsg);
+    ogs_assert(INTER_PLMN_HANDOVER_IN_VSMF(sess));
+
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    ogs_assert(smf_ue);
+
+    if (recvmsg->res_status != OGS_SBI_HTTP_STATUS_OK) {
+        ogs_error("[%s:%d] RetrieveSMContext failed [%d]",
+                smf_ue->supi, sess->psi, recvmsg->res_status);
+        return false;
+    }
+
+    RetrievedData = recvmsg->SmContextRetrievedData;
+    if (!RetrievedData || !RetrievedData->sm_context) {
+        ogs_error("[%s:%d] No retrieved SM context",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+    SmContext = RetrievedData->sm_context;
+
+    if (SmContext->pdu_session_id != sess->psi) {
+        ogs_error("[%s:%d] Retrieved PDU session ID mismatch [%d]",
+                smf_ue->supi, sess->psi, SmContext->pdu_session_id);
+        return false;
+    }
+
+    if (SmContext->h_smf_instance_id && sess->h_smf_id &&
+        strcmp(SmContext->h_smf_instance_id, sess->h_smf_id) != 0) {
+        ogs_error("[%s:%d] Retrieved H-SMF changed [%s != %s]",
+                smf_ue->supi, sess->psi,
+                SmContext->h_smf_instance_id, sess->h_smf_id);
+        return false;
+    }
+
+    if (!SmContext->pdu_session_type) {
+        ogs_error("[%s:%d] Retrieved context has no pduSessionType",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+    sess->paa.session_type = sess->session.session_type =
+        SmContext->pdu_session_type;
+
+    if (SmContext->ssc_mode) {
+        sess->session.ssc_mode = ogs_from_hex(SmContext->ssc_mode[0]);
+        if (sess->session.ssc_mode < OGS_SSC_MODE_1 ||
+            sess->session.ssc_mode > OGS_SSC_MODE_3) {
+            ogs_error("[%s:%d] Invalid retrieved sscMode [%s]",
+                    smf_ue->supi, sess->psi, SmContext->ssc_mode);
+            return false;
+        }
+    }
+
+    memset(&ue_ip, 0, sizeof(ue_ip));
+    if (SmContext->ue_ipv4_address) {
+        rv = ogs_ipv4_from_string(
+                &ue_ip.addr, SmContext->ue_ipv4_address);
+        if (rv != OGS_OK) {
+            ogs_error("[%s:%d] Invalid retrieved IPv4 address [%s]",
+                    smf_ue->supi, sess->psi,
+                    SmContext->ue_ipv4_address);
+            return false;
+        }
+        ue_ip.ipv4 = 1;
+    }
+    if (SmContext->ue_ipv6_prefix) {
+        rv = ogs_ipv6prefix_from_string(
+                ue_ip.addr6, &prefixlen, SmContext->ue_ipv6_prefix);
+        if (rv != OGS_OK) {
+            ogs_error("[%s:%d] Invalid retrieved IPv6 prefix [%s]",
+                    smf_ue->supi, sess->psi,
+                    SmContext->ue_ipv6_prefix);
+            return false;
+        }
+        ue_ip.ipv6 = 1;
+    }
+
+    switch (sess->session.session_type) {
+    case OGS_PDU_SESSION_TYPE_IPV4:
+        if (!ue_ip.ipv4)
+            return false;
+        sess->paa.addr = ue_ip.addr;
+        break;
+    case OGS_PDU_SESSION_TYPE_IPV6:
+        if (!ue_ip.ipv6)
+            return false;
+        sess->paa.len = prefixlen;
+        memcpy(sess->paa.addr6, ue_ip.addr6, OGS_IPV6_LEN);
+        break;
+    case OGS_PDU_SESSION_TYPE_IPV4V6:
+        if (!ue_ip.ipv4 || !ue_ip.ipv6)
+            return false;
+        sess->paa.both.addr = ue_ip.addr;
+        sess->paa.both.len = prefixlen;
+        memcpy(sess->paa.both.addr6, ue_ip.addr6, OGS_IPV6_LEN);
+        break;
+    default:
+        ogs_error("[%s:%d] Invalid retrieved PDU session type [%d]",
+                smf_ue->supi, sess->psi, sess->session.session_type);
+        return false;
+    }
+
+    psaTunnelInfo = SmContext->psa_tunnel_info;
+    if (!psaTunnelInfo ||
+        !(psaTunnelInfo->ipv4_addr || psaTunnelInfo->ipv6_addr) ||
+        !psaTunnelInfo->gtp_teid) {
+        ogs_error("[%s:%d] Retrieved context has no PSA tunnel",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+
+    memset(&sess->remote_ul_ip, 0, sizeof(sess->remote_ul_ip));
+    if (psaTunnelInfo->ipv4_addr) {
+        rv = ogs_ipv4_from_string(
+                &sess->remote_ul_ip.addr, psaTunnelInfo->ipv4_addr);
+        if (rv != OGS_OK)
+            return false;
+        sess->remote_ul_ip.ipv4 = 1;
+        sess->remote_ul_ip.len = OGS_IPV4_LEN;
+    }
+    if (psaTunnelInfo->ipv6_addr) {
+        rv = ogs_ipv6addr_from_string(
+                sess->remote_ul_ip.addr6, psaTunnelInfo->ipv6_addr);
+        if (rv != OGS_OK)
+            return false;
+        sess->remote_ul_ip.ipv6 = 1;
+        sess->remote_ul_ip.len = OGS_IPV6_LEN;
+    }
+    if (sess->remote_ul_ip.ipv4 && sess->remote_ul_ip.ipv6)
+        sess->remote_ul_ip.len = OGS_IPV4V6_LEN;
+
+    sess->remote_ul_teid =
+        ogs_uint64_from_string_hexadecimal(psaTunnelInfo->gtp_teid);
+
+    sessionAmbr = SmContext->session_ambr;
+    if (sessionAmbr) {
+        if (sessionAmbr->uplink)
+            sess->session.ambr.uplink =
+                ogs_sbi_bitrate_from_string(sessionAmbr->uplink);
+        if (sessionAmbr->downlink)
+            sess->session.ambr.downlink =
+                ogs_sbi_bitrate_from_string(sessionAmbr->downlink);
+    }
+
+    if (!SmContext->qos_flows_list || !SmContext->qos_flows_list->count) {
+        ogs_error("[%s:%d] Retrieved context has no QoS flow list",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+
+    qosFlowsSetupList = OpenAPI_list_create();
+    ogs_assert(qosFlowsSetupList);
+    OpenAPI_list_for_each(SmContext->qos_flows_list, node) {
+        OpenAPI_qos_flow_setup_item_t *src = node->data;
+        OpenAPI_qos_flow_setup_item_t *dst = NULL;
+
+        if (!src || !src->qfi || !src->qos_flow_profile) {
+            ogs_error("[%s:%d] Invalid retrieved QoS flow",
+                    smf_ue->supi, sess->psi);
+            CLEAR_QOS_FLOWS_SETUP_LIST(qosFlowsSetupList);
+            return false;
+        }
+
+        dst = OpenAPI_qos_flow_setup_item_copy(NULL, src);
+        if (!dst) {
+            CLEAR_QOS_FLOWS_SETUP_LIST(qosFlowsSetupList);
+            return false;
+        }
+        OpenAPI_list_add(qosFlowsSetupList, dst);
+    }
+
+    CLEAR_QOS_FLOWS_SETUP_LIST(sess->h_smf_qos_flows_setup_list);
+    sess->h_smf_qos_flows_setup_list = qosFlowsSetupList;
+
+    /*
+     * Build the new visited UP leg.  Its uplink N9 FAR points at the
+     * retained PSA/H-UPF tunnel from RetrieveSMContext.  Downlink remains
+     * buffered until the H-SMF has accepted handover preparation and the
+     * target RAN has returned HandoverRequestAcknowledge.
+     */
+    smf_sess_select_upf(sess);
+    if (!sess->pfcp_node ||
+        !OGS_FSM_CHECK(&sess->pfcp_node->sm, smf_pfcp_state_associated)) {
+        ogs_error("[%s:%d] No associated visited UPF",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+
+    smf_bearer_remove_all(sess);
+    qos_flow = smf_vcn_tunnel_add(sess);
+    ogs_assert(qos_flow);
+
+    dl_pdr = qos_flow->dl_pdr;
+    ul_pdr = qos_flow->ul_pdr;
+    ul_far = qos_flow->ul_far;
+    ogs_assert(dl_pdr);
+    ogs_assert(ul_pdr);
+    ogs_assert(ul_far);
+
+    dl_pdr->outer_header_removal_len = 1;
+    dl_pdr->outer_header_removal.description =
+        OGS_PFCP_OUTER_HEADER_REMOVAL_GTPU_UDP_IP;
+    ul_pdr->outer_header_removal_len = 1;
+    ul_pdr->outer_header_removal.description =
+        OGS_PFCP_OUTER_HEADER_REMOVAL_GTPU_UDP_IP;
+
+    if (sess->pfcp_node->up_function_features.ftup) {
+        dl_pdr->f_teid.ipv4 = 1;
+        dl_pdr->f_teid.ipv6 = 1;
+        dl_pdr->f_teid.ch = 1;
+        dl_pdr->f_teid_len = 1;
+
+        ul_pdr->f_teid.ipv4 = 1;
+        ul_pdr->f_teid.ipv6 = 1;
+        ul_pdr->f_teid.ch = 1;
+        ul_pdr->f_teid_len = 1;
+    } else {
+        ogs_assert(sess->pfcp_node->addr_list);
+
+        if (sess->local_dl_addr)
+            ogs_freeaddrinfo(sess->local_dl_addr);
+        if (sess->local_dl_addr6)
+            ogs_freeaddrinfo(sess->local_dl_addr6);
+        if (sess->local_ul_addr)
+            ogs_freeaddrinfo(sess->local_ul_addr);
+        if (sess->local_ul_addr6)
+            ogs_freeaddrinfo(sess->local_ul_addr6);
+        sess->local_dl_addr = sess->local_dl_addr6 = NULL;
+        sess->local_ul_addr = sess->local_ul_addr6 = NULL;
+
+        if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET) {
+            ogs_assert(OGS_OK == ogs_copyaddrinfo(
+                    &sess->local_dl_addr, sess->pfcp_node->addr_list));
+            ogs_assert(OGS_OK == ogs_copyaddrinfo(
+                    &sess->local_ul_addr, sess->pfcp_node->addr_list));
+        } else if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET6) {
+            ogs_assert(OGS_OK == ogs_copyaddrinfo(
+                    &sess->local_dl_addr6, sess->pfcp_node->addr_list));
+            ogs_assert(OGS_OK == ogs_copyaddrinfo(
+                    &sess->local_ul_addr6, sess->pfcp_node->addr_list));
+        } else {
+            ogs_assert_if_reached();
+        }
+
+        sess->local_dl_teid = dl_pdr->teid;
+        sess->local_ul_teid = ul_pdr->teid;
+
+        ogs_assert(OGS_OK == ogs_pfcp_sockaddr_to_f_teid(
+                sess->local_dl_addr, sess->local_dl_addr6,
+                &dl_pdr->f_teid, &dl_pdr->f_teid_len));
+        dl_pdr->f_teid.teid = sess->local_dl_teid;
+
+        ogs_assert(OGS_OK == ogs_pfcp_sockaddr_to_f_teid(
+                sess->local_ul_addr, sess->local_ul_addr6,
+                &ul_pdr->f_teid, &ul_pdr->f_teid_len));
+        ul_pdr->f_teid.teid = sess->local_ul_teid;
+    }
+
+    dl_pdr->precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
+    ul_pdr->precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
+
+    ul_far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
+    ogs_assert(OGS_OK == ogs_pfcp_ip_to_outer_header_creation(
+            &sess->remote_ul_ip,
+            &ul_far->outer_header_creation,
+            &ul_far->outer_header_creation_len));
+    ul_far->outer_header_creation.teid = sess->remote_ul_teid;
+
+    rv = smf_5gc_pfcp_send_session_establishment_request(
+            sess, stream, 0);
+    if (rv != OGS_OK) {
+        ogs_error("[%s:%d] Cannot establish visited UPF leg",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+
+    ogs_info("[%s:%d] Retrieved anchor context; V-UPF N9 leg requested",
+            smf_ue->supi, sess->psi);
+    return true;
+}
+
+bool smf_nsmf_handle_retrieve_sm_context(
+    smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *message)
+{
+    OpenAPI_sm_context_retrieve_data_t *RetrieveData = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(stream);
+    ogs_assert(message);
+
+    RetrieveData = message->SmContextRetrieveData;
+    if (!RetrieveData) {
+        ogs_error("[%d] No SmContextRetrieveData", sess->psi);
+        ogs_assert(true == ogs_sbi_server_send_error(
+                stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST, message,
+                "No SmContextRetrieveData", NULL, NULL));
+        return false;
+    }
+
+    /*
+     * M3 implements the 5GS full-context form used for V-SMF insertion
+     * during N2 handover.  Reject EPS-PDN and AF-coordination retrieval
+     * explicitly rather than returning an incomplete object under the wrong
+     * semantic type.
+     */
+    if (RetrieveData->sm_context_type !=
+            OpenAPI_sm_context_type_SM_CONTEXT) {
+        ogs_error("[%d] Unsupported smContextType [%d]",
+                sess->psi, RetrieveData->sm_context_type);
+        ogs_assert(true == ogs_sbi_server_send_error(
+                stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST, message,
+                "Unsupported smContextType", NULL, NULL));
+        return false;
+    }
+
+    if (!smf_sbi_send_sm_context_retrieved_data(sess, stream)) {
+        ogs_error("[%d] Cannot send SmContextRetrievedData", sess->psi);
+        return false;
+    }
 
     return true;
 }
@@ -1048,6 +1516,32 @@ bool smf_nsmf_handle_update_sm_context(
                 OpenAPI_ho_state_CANCELLED) {
             smf_bearer_t *qos_flow = NULL;
 
+            if (INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+                /*
+                 * HR relocation cancel: clear the H-SMF staged target path
+                 * before acknowledging the AMF. No V-CN tunnel is included,
+                 * which distinguishes cancel from execution at the H-SMF.
+                 */
+                memset(&sess->nsmf_param, 0, sizeof(sess->nsmf_param));
+                sess->nsmf_param.request_indication =
+                    OpenAPI_request_indication_PDU_SES_MOB;
+                sess->nsmf_param.ho_state = OpenAPI_ho_state_CANCELLED;
+
+                r = smf_sbi_discover_and_send(
+                        OpenAPI_service_name_nsmf_pdusession, NULL,
+                        smf_nsmf_pdusession_build_hsmf_update_data,
+                        sess, stream,
+                        SMF_UPDATE_STATE_INTER_PLMN_HO_CANCEL, NULL);
+                ogs_expect(r == OGS_OK);
+                if (r == OGS_ERROR) {
+                    smf_sbi_send_sm_context_update_error_log(
+                            stream, OGS_SBI_HTTP_STATUS_BAD_GATEWAY,
+                            "Cannot cancel H-SMF handover preparation", NULL);
+                    return false;
+                }
+                return true;
+            }
+
             sess->handover.prepared = false;
 
             ogs_list_for_each(&sess->bearer_list, qos_flow) {
@@ -1221,6 +1715,7 @@ bool smf_nsmf_handle_create_data_in_hsmf(
     smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
 {
     bool rc;
+    bool handover_preparation = false;
     smf_ue_t *smf_ue = NULL;
     char *type = NULL;
 
@@ -1263,6 +1758,133 @@ bool smf_nsmf_handle_create_data_in_hsmf(
                 OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
                 "No PduSessionCreateData", smf_ue->supi, NULL);
         return false;
+    }
+
+    handover_preparation =
+        PduSessionCreateData->is_ho_preparation_indication &&
+        PduSessionCreateData->ho_preparation_indication;
+
+    if (handover_preparation) {
+        ogs_ip_t target_vcn_ip;
+
+        /*
+         * TS 29.502 N2 handover preparation with V-SMF insertion/change.
+         * This POST prepares an already anchored PDU session.  Do not run
+         * establishment/N1/UDM/policy procedures and do not switch the
+         * active H-UPF downlink yet.
+         */
+        if (PduSessionCreateData->request_type !=
+                OpenAPI_request_type_EXISTING_PDU_SESSION) {
+            smf_sbi_send_pdu_session_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                    "Handover preparation is not EXISTING_PDU_SESSION",
+                    smf_ue->supi, NULL);
+            return false;
+        }
+
+        if (!PduSessionCreateData->vsmf_id ||
+            !PduSessionCreateData->vsmf_pdu_session_uri ||
+            !PduSessionCreateData->serving_network ||
+            !PduSessionCreateData->an_type ||
+            !PduSessionCreateData->rat_type) {
+            smf_sbi_send_pdu_session_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                    "Missing target V-SMF handover information",
+                    smf_ue->supi, NULL);
+            return false;
+        }
+
+        vcnTunnelInfo = PduSessionCreateData->vcn_tunnel_info;
+        if (!vcnTunnelInfo ||
+            !(vcnTunnelInfo->ipv4_addr || vcnTunnelInfo->ipv6_addr) ||
+            !vcnTunnelInfo->gtp_teid) {
+            smf_sbi_send_pdu_session_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    OGS_SBI_APP_ERRNO_NULL,
+                    OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                    "Invalid target vcnTunnelInfo",
+                    smf_ue->supi, NULL);
+            return false;
+        }
+
+        memset(&target_vcn_ip, 0, sizeof(target_vcn_ip));
+        if (vcnTunnelInfo->ipv4_addr) {
+            rv = ogs_ipv4_from_string(
+                    &target_vcn_ip.addr, vcnTunnelInfo->ipv4_addr);
+            if (rv != OGS_OK) {
+                smf_sbi_send_pdu_session_create_error(stream,
+                        OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                        OGS_SBI_APP_ERRNO_NULL,
+                        OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                        "Invalid target V-CN IPv4 address",
+                        vcnTunnelInfo->ipv4_addr, NULL);
+                return false;
+            }
+            target_vcn_ip.ipv4 = 1;
+            target_vcn_ip.len = OGS_IPV4_LEN;
+        }
+        if (vcnTunnelInfo->ipv6_addr) {
+            rv = ogs_ipv6addr_from_string(
+                    target_vcn_ip.addr6, vcnTunnelInfo->ipv6_addr);
+            if (rv != OGS_OK) {
+                smf_sbi_send_pdu_session_create_error(stream,
+                        OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                        OGS_SBI_APP_ERRNO_NULL,
+                        OGS_5GSM_CAUSE_INVALID_MANDATORY_INFORMATION,
+                        "Invalid target V-CN IPv6 address",
+                        vcnTunnelInfo->ipv6_addr, NULL);
+                return false;
+            }
+            target_vcn_ip.ipv6 = 1;
+            target_vcn_ip.len = OGS_IPV6_LEN;
+        }
+        if (target_vcn_ip.ipv4 && target_vcn_ip.ipv6)
+            target_vcn_ip.len = OGS_IPV4V6_LEN;
+
+        memset(&sess->hsmf_handover.target_vcn_ip, 0,
+                sizeof(sess->hsmf_handover.target_vcn_ip));
+        memcpy(&sess->hsmf_handover.target_vcn_ip, &target_vcn_ip,
+                sizeof(target_vcn_ip));
+        sess->hsmf_handover.target_vcn_teid =
+            ogs_uint64_from_string_hexadecimal(vcnTunnelInfo->gtp_teid);
+
+        if (sess->hsmf_handover.target_vsmf_id)
+            ogs_free(sess->hsmf_handover.target_vsmf_id);
+        sess->hsmf_handover.target_vsmf_id =
+            ogs_strdup(PduSessionCreateData->vsmf_id);
+        ogs_assert(sess->hsmf_handover.target_vsmf_id);
+
+        if (sess->hsmf_handover.target_vsmf_pdu_session_uri)
+            ogs_free(sess->hsmf_handover.target_vsmf_pdu_session_uri);
+        sess->hsmf_handover.target_vsmf_pdu_session_uri =
+            ogs_strdup(PduSessionCreateData->vsmf_pdu_session_uri);
+        ogs_assert(sess->hsmf_handover.target_vsmf_pdu_session_uri);
+
+        sess->hsmf_handover.pending = true;
+
+        ogs_info("[%s:%d] H-SMF staged target V-CN [%s:%s:%s]",
+                smf_ue->supi, sess->psi,
+                vcnTunnelInfo->ipv4_addr ?
+                    vcnTunnelInfo->ipv4_addr : "NULL",
+                vcnTunnelInfo->ipv6_addr ?
+                    vcnTunnelInfo->ipv6_addr : "NULL",
+                vcnTunnelInfo->gtp_teid);
+
+        /*
+         * Return the existing anchor parameters. The response helper omits
+         * N1 when hsmf_handover.pending is set.
+         */
+        if (!smf_sbi_send_pdu_session_created_data(sess, stream)) {
+            ogs_error("[%s:%d] Cannot return H-SMF handover preparation",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
+        return true;
     }
 
     n1SmInfoFromUe = PduSessionCreateData->n1_sm_info_from_ue;
@@ -1667,6 +2289,7 @@ bool smf_nsmf_handle_created_data_in_vsmf(
     smf_sess_t *sess, ogs_sbi_message_t *recvmsg)
 {
     int rv;
+    bool inter_plmn_handover = false;
 
     smf_ue_t *smf_ue = NULL;
 
@@ -1675,6 +2298,8 @@ bool smf_nsmf_handle_created_data_in_vsmf(
     ogs_assert(sess);
     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
     ogs_assert(smf_ue);
+
+    inter_plmn_handover = INTER_PLMN_HANDOVER_IN_VSMF(sess);
 
     if (recvmsg->res_status == OGS_SBI_HTTP_STATUS_CREATED) {
         OpenAPI_pdu_session_created_data_t *PduSessionCreatedData = NULL;
@@ -1716,26 +2341,32 @@ bool smf_nsmf_handle_created_data_in_vsmf(
 
         PduSessionCreatedData = recvmsg->PduSessionCreatedData;
 
-        n1SmInfoToUe = PduSessionCreatedData->n1_sm_info_to_ue;
-        if (!n1SmInfoToUe || !n1SmInfoToUe->content_id) {
-            ogs_error("[%s:%d] No n1SmInfoToUe", smf_ue->supi, sess->psi);
-            return false;
-        }
+        if (!inter_plmn_handover) {
+            n1SmInfoToUe = PduSessionCreatedData->n1_sm_info_to_ue;
+            if (!n1SmInfoToUe || !n1SmInfoToUe->content_id) {
+                ogs_error("[%s:%d] No n1SmInfoToUe",
+                        smf_ue->supi, sess->psi);
+                return false;
+            }
 
-        n1SmBufToUe = ogs_sbi_find_part_by_content_id(
-                recvmsg, n1SmInfoToUe->content_id);
-        if (!n1SmBufToUe) {
-            ogs_error("[%s:%d] No N1 SM Content [%s]",
-                    smf_ue->supi, sess->psi, n1SmInfoToUe->content_id);
-            return false;
-        }
+            n1SmBufToUe = ogs_sbi_find_part_by_content_id(
+                    recvmsg, n1SmInfoToUe->content_id);
+            if (!n1SmBufToUe) {
+                ogs_error("[%s:%d] No N1 SM Content [%s]",
+                        smf_ue->supi, sess->psi,
+                        n1SmInfoToUe->content_id);
+                return false;
+            }
 
-        rv = gsmue_decode_n1_sm_info(&nas_message, n1SmBufToUe);
-        if (rv != OGS_OK) {
-            ogs_error("[%s:%d] cannot decode N1 SM Content [%s]",
-                    smf_ue->supi, sess->psi, n1SmInfoToUe->content_id);
-            ogs_log_hexdump(OGS_LOG_ERROR, n1SmBufToUe->data, n1SmBufToUe->len);
-            return false;
+            rv = gsmue_decode_n1_sm_info(&nas_message, n1SmBufToUe);
+            if (rv != OGS_OK) {
+                ogs_error("[%s:%d] cannot decode N1 SM Content [%s]",
+                        smf_ue->supi, sess->psi,
+                        n1SmInfoToUe->content_id);
+                ogs_log_hexdump(OGS_LOG_ERROR,
+                        n1SmBufToUe->data, n1SmBufToUe->len);
+                return false;
+            }
         }
 
         if (!PduSessionCreatedData->pdu_session_type) {
@@ -2050,32 +2681,34 @@ bool smf_nsmf_handle_created_data_in_vsmf(
 
         ogs_sbi_header_free(&header);
 
-        /* Handle GSM Message from n1SmInfoToUe */
-        pdu_session_establishment_accept =
-            &nas_message.gsm.pdu_session_establishment_accept;
+        if (!inter_plmn_handover) {
+            /* Handle GSM Message from n1SmInfoToUe */
+            pdu_session_establishment_accept =
+                &nas_message.gsm.pdu_session_establishment_accept;
 
-        if (pdu_session_establishment_accept->presencemask &
-            OGS_NAS_5GS_PDU_SESSION_ESTABLISHMENT_ACCEPT_5GSM_CAUSE_PRESENT) {
-            ogs_nas_5gsm_cause_t *gsm_cause =
-                &pdu_session_establishment_accept->gsm_cause;
-            sess->h_smf_gsm_cause = *gsm_cause;
+            if (pdu_session_establishment_accept->presencemask &
+                OGS_NAS_5GS_PDU_SESSION_ESTABLISHMENT_ACCEPT_5GSM_CAUSE_PRESENT) {
+                ogs_nas_5gsm_cause_t *gsm_cause =
+                    &pdu_session_establishment_accept->gsm_cause;
+                sess->h_smf_gsm_cause = *gsm_cause;
+            }
+
+            if (pdu_session_establishment_accept->presencemask &
+                OGS_NAS_5GS_PDU_SESSION_ESTABLISHMENT_ACCEPT_EXTENDED_PROTOCOL_CONFIGURATION_OPTIONS_PRESENT) {
+                OGS_NAS_STORE_DATA(
+                    &sess->h_smf_extended_protocol_configuration_options,
+                    &pdu_session_establishment_accept->
+                        extended_protocol_configuration_options);
+            }
+
+            ogs_assert(OGS_OK ==
+                    smf_5gc_pfcp_send_one_qos_flow_modification_request(
+                        qos_flow, NULL,
+                        OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
+                        OGS_PFCP_MODIFY_UL_ONLY|
+                        OGS_PFCP_MODIFY_OUTER_HEADER_REMOVAL|
+                        OGS_PFCP_MODIFY_ACTIVATE, 0));
         }
-
-        if (pdu_session_establishment_accept->presencemask &
-            OGS_NAS_5GS_PDU_SESSION_ESTABLISHMENT_ACCEPT_EXTENDED_PROTOCOL_CONFIGURATION_OPTIONS_PRESENT) {
-            OGS_NAS_STORE_DATA(
-                &sess->h_smf_extended_protocol_configuration_options,
-                &pdu_session_establishment_accept->
-                    extended_protocol_configuration_options);
-        }
-
-        ogs_assert(OGS_OK ==
-                smf_5gc_pfcp_send_one_qos_flow_modification_request(
-                    qos_flow, NULL,
-                    OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
-                    OGS_PFCP_MODIFY_UL_ONLY|
-                    OGS_PFCP_MODIFY_OUTER_HEADER_REMOVAL|
-                    OGS_PFCP_MODIFY_ACTIVATE, 0));
 
         ogs_info("UE SUPI[%s] DNN[%s] S_NSSAI[SST:%d SD:0x%x] "
                 "pduSessionRef[%s] pduSessionResourceURI[%s]",
@@ -2139,6 +2772,7 @@ bool smf_nsmf_handle_update_data_in_hsmf(
     ogs_assert(smf_ue);
 
     memset(&sess->nsmf_param, 0, sizeof(sess->nsmf_param));
+    memset(&nas_message, 0, sizeof(nas_message));
 
     HsmfUpdateData = message->HsmfUpdateData;
     if (!HsmfUpdateData) {
@@ -2162,6 +2796,12 @@ bool smf_nsmf_handle_update_data_in_hsmf(
     }
 
     sess->nsmf_param.request_indication = HsmfUpdateData->request_indication;
+
+    if (HsmfUpdateData->is_ho_preparation_indication) {
+        sess->nsmf_param.ho_preparation_indication_presence = true;
+        sess->nsmf_param.ho_preparation_indication =
+            HsmfUpdateData->ho_preparation_indication ? true : false;
+    }
 
     sess->nsmf_param.up_cnx_state = HsmfUpdateData->up_cnx_state;
 

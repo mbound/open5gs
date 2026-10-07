@@ -92,6 +92,14 @@ typedef struct smf_nsmf_pdusession_param_s {
 
     OpenAPI_up_cnx_state_e up_cnx_state;
 
+    /*
+     * Handover execution/cancel indication carried between V-SMF and H-SMF.
+     * hoPreparationIndication is meaningful only when the presence bit is set.
+     */
+    OpenAPI_ho_state_e ho_state;
+    bool ho_preparation_indication_presence;
+    bool ho_preparation_indication;
+
 #define QOS_RULE_CODE_FROM_PFCP_FLAGS(pfcp_flags) \
         (pfcp_flags & OGS_PFCP_MODIFY_CREATE) ? \
             OGS_NAS_QOS_CODE_CREATE_NEW_QOS_RULE : \
@@ -642,6 +650,41 @@ typedef struct smf_sess_s {
     struct {
         int pdu_session_resource_release;
     } ngap_state;
+
+    /*
+     * Inter-PLMN N2 handover with V-SMF insertion/change.
+     *
+     * This state belongs to the target V-SMF.  It is separate from the
+     * ordinary handover state below because the source SM context remains
+     * owned by the anchor H-SMF while this SMF creates a new visited leg.
+     */
+#define INTER_PLMN_HANDOVER_IN_VSMF(__sESS) \
+    ((__sESS) && (__sESS)->inter_plmn_handover.pending)
+    struct {
+        bool pending;
+
+        char *source_sm_context_uri;
+        char *source_smf_id;
+        ogs_plmn_id_t source_smf_plmn_id;
+
+        OpenAPI_ng_ran_target_id_t *target_id;
+        ogs_pkbuf_t *handover_required;
+    } inter_plmn_handover;
+
+    /*
+     * H-SMF side of inter-PLMN handover preparation.  Keep the currently
+     * active V-CN/downlink path untouched until execution; the target V-SMF
+     * N9 endpoint is staged here.
+     */
+#define INTER_PLMN_HANDOVER_PREP_IN_HSMF(__sESS) \
+    ((__sESS) && (__sESS)->hsmf_handover.pending)
+    struct {
+        bool pending;
+        ogs_ip_t target_vcn_ip;
+        uint32_t target_vcn_teid;
+        char *target_vsmf_id;
+        char *target_vsmf_pdu_session_uri;
+    } hsmf_handover;
 
     /* Handover */
     struct {

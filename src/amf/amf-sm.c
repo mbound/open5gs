@@ -193,7 +193,63 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
+                /*
+                 * TS 29.518 Individual UE Context resource:
+                 * PUT /ue-contexts/{ueContextId} is the
+                 * Namf_Communication_CreateUEContext operation.
+                 */
+                if (!sbi_message.h.resource.component[2]) {
+                    SWITCH(sbi_message.h.method)
+                    CASE(OGS_SBI_HTTP_METHOD_PUT)
+                        rv = amf_namf_comm_handle_create_ue_context_request(
+                                stream, &sbi_message);
+                        if (rv != OGS_OK) {
+                            ogs_assert(true ==
+                                ogs_sbi_server_send_error(stream,
+                                    OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                                    &sbi_message,
+                                    "Invalid UeContextCreateData",
+                                    NULL, NULL));
+                        }
+                        break;
+
+                    DEFAULT
+                        ogs_error("Invalid HTTP method [%s]",
+                                sbi_message.h.method);
+                        ogs_assert(true ==
+                            ogs_sbi_server_send_error(stream,
+                                OGS_SBI_HTTP_STATUS_FORBIDDEN, &sbi_message,
+                                "Invalid HTTP method", sbi_message.h.method,
+                                NULL));
+                    END
+                    break;
+                }
+
                 SWITCH(sbi_message.h.resource.component[2])
+                CASE(OGS_SBI_RESOURCE_NAME_RELEASE)
+                    SWITCH(sbi_message.h.method)
+                    CASE(OGS_SBI_HTTP_METHOD_POST)
+                        rv = amf_namf_comm_handle_release_ue_context_request(
+                                stream, &sbi_message);
+                        if (rv != OGS_OK) {
+                            ogs_assert(true ==
+                                ogs_sbi_server_send_error(stream,
+                                    rv == OGS_NOTFOUND ?
+                                        OGS_SBI_HTTP_STATUS_NOT_FOUND :
+                                        OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                                    &sbi_message,
+                                    "ReleaseUEContext failed", NULL, NULL));
+                        }
+                        break;
+                    DEFAULT
+                        ogs_assert(true ==
+                            ogs_sbi_server_send_error(stream,
+                                OGS_SBI_HTTP_STATUS_FORBIDDEN, &sbi_message,
+                                "Invalid HTTP method", sbi_message.h.method,
+                                NULL));
+                    END
+                    break;
+
                 CASE(OGS_SBI_RESOURCE_NAME_N1_N2_MESSAGES)
                     SWITCH(sbi_message.h.method)
                     CASE(OGS_SBI_HTTP_METHOD_POST)
@@ -279,6 +335,11 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             SWITCH(sbi_message.h.resource.component[1])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXT_STATUS)
                 amf_namf_callback_handle_sm_context_status(
+                        stream, &sbi_message);
+                break;
+
+            CASE(OGS_SBI_RESOURCE_NAME_N2_INFO_NOTIFY)
+                amf_namf_callback_handle_n2_info_notify(
                         stream, &sbi_message);
                 break;
 
@@ -629,7 +690,7 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
 
             DEFAULT
                 rv = amf_nsmf_pdusession_handle_create_sm_context(
-                        amf_ue, ran_ue, sess, &sbi_message);
+                        amf_ue, ran_ue, sess, state, &sbi_message);
                 if (rv != OGS_OK) {
                     /*
                      * 1. First PDU session establishment request

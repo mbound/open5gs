@@ -52,7 +52,9 @@ bool smf_sbi_send_request(
 #define SMF_CREATE_STATE_BASE       0x10U           /* CREATE at 0x10 */
 
 #define SMF_CREATE_STATE_NONE                       \
-    (SMF_CREATE_STATE_BASE + 0x00U)  /* 0x00 */
+    (SMF_CREATE_STATE_BASE + 0x00U)  /* 0x10 */
+#define SMF_CREATE_STATE_INTER_PLMN_HANDOVER         \
+    (SMF_CREATE_STATE_BASE + 0x01U)  /* 0x11 */
 
 /* Base offset for SMF_UPDATE states */
 #define SMF_UPDATE_STATE_BASE       0x20U           /* UPDATE at 0x20–0x24 */
@@ -73,7 +75,11 @@ bool smf_sbi_send_request(
 #define SMF_UPDATE_STATE_DEACTIVATED                \
     (SMF_UPDATE_STATE_BASE + 0x06U)  /* 0x06 */
 #define SMF_UPDATE_STATE_UE_REQ_MOD                 \
-    (SMF_UPDATE_STATE_BASE + 0x07U)  /* 0x07 */
+    (SMF_UPDATE_STATE_BASE + 0x07U)  /* 0x27 */
+#define SMF_UPDATE_STATE_INTER_PLMN_HO_COMMIT        \
+    (SMF_UPDATE_STATE_BASE + 0x08U)  /* 0x28 */
+#define SMF_UPDATE_STATE_INTER_PLMN_HO_CANCEL        \
+    (SMF_UPDATE_STATE_BASE + 0x09U)  /* 0x29 */
 
 /* Base offset for SMF_REMOVE states */
 #define SMF_REMOVE_STATE_BASE       0x30U           /* REMOVE at 0x30 */
@@ -137,11 +143,16 @@ void smf_namf_comm_send_n1_n2_pdu_establishment_reject(
 
 void smf_sbi_send_sm_context_created_data(
         smf_sess_t *sess, ogs_sbi_stream_t *stream);
+void smf_sbi_send_inter_plmn_handover_sm_context_created(
+        smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_pkbuf_t *n2smbuf);
 void smf_sbi_send_sm_context_create_error(
         ogs_sbi_stream_t *stream,
         int status, ogs_sbi_app_errno_e err,
         const char *title, const char *detail,
         ogs_pkbuf_t *n1smbuf);
+
+bool smf_sbi_send_sm_context_retrieved_data(
+        smf_sess_t *sess, ogs_sbi_stream_t *stream);
 
 #define smf_sbi_send_sm_context_updated_data_up_cnx_state( \
             __sESS, __sTREAM, __uPCnxState) \

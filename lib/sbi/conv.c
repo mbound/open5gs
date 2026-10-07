@@ -1475,6 +1475,9 @@ void ogs_sbi_free_nr_location(OpenAPI_nr_location_t *NrLocation)
         ogs_free(Ncgi);
     }
 
+    if (NrLocation->ntn_tai_info)
+        OpenAPI_ntn_tai_info_free(NrLocation->ntn_tai_info);
+
     ogs_free(NrLocation);
 }
 

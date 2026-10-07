@@ -18,11 +18,909 @@
  */
 
 #include "namf-handler.h"
+#include "namf-build.h"
 #include "nsmf-handler.h"
 
 #include "nas-path.h"
 #include "ngap-path.h"
 #include "sbi-path.h"
+
+static int amf_namf_comm_target_gnb_id(
+        OpenAPI_ng_ran_target_id_t *TargetId, uint32_t *gnb_id)
+{
+    OpenAPI_gnb_id_t *GnbId = NULL;
+    uint8_t encoded[4] = {0, };
+    int encoded_len;
+    int unused_bits;
+    uint64_t value;
+
+    ogs_assert(TargetId);
+    ogs_assert(gnb_id);
+
+    if (!TargetId->ran_node_id ||
+        !TargetId->ran_node_id->g_nb_id ||
+        !TargetId->ran_node_id->g_nb_id->g_nb_value)
+        return OGS_ERROR;
+
+    GnbId = TargetId->ran_node_id->g_nb_id;
+    if (GnbId->bit_length < 22 || GnbId->bit_length > 32)
+        return OGS_ERROR;
+
+    encoded_len = strlen(GnbId->g_nb_value);
+    if (!encoded_len || (encoded_len & 1) ||
+        encoded_len / 2 > (int)sizeof(encoded))
+        return OGS_ERROR;
+
+    if (ogs_ascii_to_hex_checked(
+            GnbId->g_nb_value, encoded_len,
+            encoded, encoded_len / 2) != OGS_OK)
+        return OGS_ERROR;
+
+    unused_bits = (encoded_len / 2) * 8 - GnbId->bit_length;
+    if (unused_bits < 0 || unused_bits > 7)
+        return OGS_ERROR;
+
+    value = ogs_buffer_to_uint64(encoded, encoded_len / 2);
+    value >>= unused_bits;
+    if (value > UINT32_MAX)
+        return OGS_ERROR;
+
+    *gnb_id = (uint32_t)value;
+    return OGS_OK;
+}
+
+static int amf_namf_comm_target_tai(
+        OpenAPI_ng_ran_target_id_t *TargetId, ogs_5gs_tai_t *tai)
+{
+    OpenAPI_plmn_id_t *PlmnId = NULL;
+    char *end = NULL;
+    unsigned long mcc, mnc;
+    int mnc_len;
+
+    ogs_assert(TargetId);
+    ogs_assert(tai);
+
+    if (!TargetId->tai || !TargetId->tai->plmn_id ||
+        !TargetId->tai->plmn_id->mcc ||
+        !TargetId->tai->plmn_id->mnc ||
+        !TargetId->tai->tac)
+        return OGS_ERROR;
+
+    PlmnId = TargetId->tai->plmn_id;
+    mnc_len = strlen(PlmnId->mnc);
+    if (strlen(PlmnId->mcc) != 3 || (mnc_len != 2 && mnc_len != 3))
+        return OGS_ERROR;
+
+    mcc = strtoul(PlmnId->mcc, &end, 10);
+    if (!end || *end || mcc > 999)
+        return OGS_ERROR;
+
+    mnc = strtoul(PlmnId->mnc, &end, 10);
+    if (!end || *end || mnc > 999)
+        return OGS_ERROR;
+
+    memset(tai, 0, sizeof(*tai));
+    ogs_plmn_id_build(&tai->plmn_id,
+            (uint16_t)mcc, (uint16_t)mnc, (uint16_t)mnc_len);
+    tai->tac = ogs_uint24_from_string_hexadecimal(TargetId->tai->tac);
+
+    return OGS_OK;
+}
+
+static int amf_namf_comm_decode_ue_context(
+        amf_ue_t *amf_ue, OpenAPI_ue_context_t *UeContext,
+        bool save_to_release_session_list);
+
+int amf_namf_comm_handle_create_ue_context_request(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
+{
+    int r;
+    uint32_t target_gnb_id = 0;
+    ogs_5gs_tai_t target_tai;
+    OpenAPI_ue_context_create_data_t *CreateData = NULL;
+    OpenAPI_n2_sm_information_t *N2SmInformation = NULL;
+    OpenAPI_n2_info_content_t *N2InfoContent = NULL;
+    OpenAPI_lnode_t *node = NULL;
+    ogs_pkbuf_t *source_to_target = NULL;
+    ogs_pkbuf_t *handover_required = NULL;
+    amf_gnb_t *target_gnb = NULL;
+    ran_ue_t *target_ue = NULL;
+    amf_ue_t *amf_ue = NULL;
+    amf_sess_t *sess = NULL;
+    amf_nsmf_pdusession_sm_context_param_t param;
+    char *ue_context_id = NULL;
+
+    ogs_assert(stream);
+    ogs_assert(recvmsg);
+
+    memset(&param, 0, sizeof(param));
+
+    CreateData = recvmsg->UeContextCreateData;
+    if (!CreateData) {
+        ogs_error("No UeContextCreateData");
+        return OGS_ERROR;
+    }
+
+    ue_context_id = recvmsg->h.resource.component[1];
+    if (!ue_context_id) {
+        ogs_error("No UE Context ID");
+        return OGS_ERROR;
+    }
+
+    if (!CreateData->ue_context || !CreateData->ue_context->supi) {
+        ogs_error("[%s] No ueContext/SUPI", ue_context_id);
+        return OGS_ERROR;
+    }
+    if (strcmp(ue_context_id, CreateData->ue_context->supi) != 0) {
+        ogs_error("[%s] UE Context ID does not match SUPI [%s]",
+                ue_context_id, CreateData->ue_context->supi);
+        return OGS_ERROR;
+    }
+    if (!CreateData->target_id) {
+        ogs_error("[%s] No targetId", ue_context_id);
+        return OGS_ERROR;
+    }
+    if (!CreateData->source_to_target_data ||
+        CreateData->source_to_target_data->ngap_ie_type !=
+            OpenAPI_ngap_ie_type_SRC_TO_TAR_CONTAINER ||
+        !CreateData->source_to_target_data->ngap_data ||
+        !CreateData->source_to_target_data->ngap_data->content_id) {
+        ogs_error("[%s] Invalid sourceToTargetData", ue_context_id);
+        return OGS_ERROR;
+    }
+    if (!CreateData->pdu_session_list ||
+        CreateData->pdu_session_list->count != 1) {
+        ogs_error("[%s] M1 requires exactly one PDU session [count:%d]",
+                ue_context_id,
+                CreateData->pdu_session_list ?
+                    CreateData->pdu_session_list->count : 0);
+        return OGS_ERROR;
+    }
+    if (!CreateData->n2_notify_uri) {
+        ogs_error("[%s] No n2NotifyUri", ue_context_id);
+        return OGS_ERROR;
+    }
+    if (!CreateData->ngap_cause) {
+        ogs_error("[%s] No ngapCause", ue_context_id);
+        return OGS_ERROR;
+    }
+    if (!CreateData->ue_context->seaf_data ||
+        !CreateData->ue_context->seaf_data->key_amf ||
+        !CreateData->ue_context->seaf_data->key_amf->key_val ||
+        !CreateData->ue_context->seaf_data->nh ||
+        !CreateData->ue_context->seaf_data->is_ncc) {
+        ogs_error("[%s] Incomplete handover security context", ue_context_id);
+        return OGS_ERROR;
+    }
+
+    source_to_target = ogs_sbi_find_part_by_content_id(
+            recvmsg,
+            CreateData->source_to_target_data->ngap_data->content_id);
+    if (!source_to_target) {
+        ogs_error("[%s] Missing Source-to-Target container [%s]",
+                ue_context_id,
+                CreateData->source_to_target_data->ngap_data->content_id);
+        return OGS_ERROR;
+    }
+
+    OpenAPI_list_for_each(CreateData->pdu_session_list, node) {
+        N2SmInformation = node->data;
+        break;
+    }
+    if (!N2SmInformation ||
+        N2SmInformation->pdu_session_id ==
+            OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED ||
+        !N2SmInformation->n2_info_content) {
+        ogs_error("[%s] Invalid pduSessionList", ue_context_id);
+        return OGS_ERROR;
+    }
+
+    N2InfoContent = N2SmInformation->n2_info_content;
+    if (N2InfoContent->ngap_ie_type !=
+            OpenAPI_ngap_ie_type_HANDOVER_REQUIRED ||
+        !N2InfoContent->ngap_data ||
+        !N2InfoContent->ngap_data->content_id) {
+        ogs_error("[%s:%d] Invalid HandoverRequired N2 information",
+                ue_context_id, N2SmInformation->pdu_session_id);
+        return OGS_ERROR;
+    }
+
+    handover_required = ogs_sbi_find_part_by_content_id(
+            recvmsg, N2InfoContent->ngap_data->content_id);
+    if (!handover_required) {
+        ogs_error("[%s:%d] Missing HandoverRequired binary part [%s]",
+                ue_context_id, N2SmInformation->pdu_session_id,
+                N2InfoContent->ngap_data->content_id);
+        return OGS_ERROR;
+    }
+
+    if (amf_namf_comm_target_gnb_id(
+            CreateData->target_id, &target_gnb_id) != OGS_OK) {
+        ogs_error("[%s] Invalid target gNB ID", ue_context_id);
+        return OGS_ERROR;
+    }
+    if (amf_namf_comm_target_tai(
+            CreateData->target_id, &target_tai) != OGS_OK) {
+        ogs_error("[%s] Invalid target TAI", ue_context_id);
+        return OGS_ERROR;
+    }
+
+    target_gnb = amf_gnb_find_by_gnb_id(target_gnb_id);
+    if (!target_gnb) {
+        ogs_error("[%s] Target gNB not connected [gNB-ID:0x%x]",
+                ue_context_id, target_gnb_id);
+        return OGS_ERROR;
+    }
+    if (amf_find_served_tai(&target_tai) < 0) {
+        ogs_error("[%s] Target TAI is not served by this AMF "
+                "[PLMN:%06x TAC:%d]", ue_context_id,
+                ogs_plmn_id_hexdump(&target_tai.plmn_id), target_tai.tac.v);
+        return OGS_ERROR;
+    }
+
+    if (amf_ue_find_by_supi(CreateData->ue_context->supi)) {
+        ogs_error("[%s] Target AMF already has a UE context", ue_context_id);
+        return OGS_ERROR;
+    }
+
+    target_ue = ran_ue_add(target_gnb, INVALID_UE_NGAP_ID);
+    if (!target_ue) {
+        ogs_error("[%s] Cannot allocate target RAN UE", ue_context_id);
+        return OGS_ERROR;
+    }
+
+    memcpy(&target_ue->saved.nr_tai, &target_tai, sizeof(target_tai));
+    memcpy(&target_ue->saved.nr_cgi.plmn_id,
+            &target_tai.plmn_id, sizeof(target_tai.plmn_id));
+
+    amf_ue = amf_ue_add(target_ue);
+    if (!amf_ue) {
+        ran_ue_remove(target_ue);
+        return OGS_ERROR;
+    }
+    amf_ue_associate_ran_ue(amf_ue, target_ue);
+
+    /*
+     * Mark the relocation context before decoding the transferred sessions.
+     * The session decoder needs to distinguish a same-PLMN handover (reuse
+     * the transferred SM context) from an inter-PLMN HPLMN->VPLMN handover
+     * where the transferred H-SMF context is migration metadata and a local
+     * V-SMF must be inserted.
+     */
+    amf_ue->handover.inter_amf_target = true;
+    memcpy(&amf_ue->nr_tai, &target_tai, sizeof(target_tai));
+
+    if (CreateData->serving_network) {
+        ogs_sbi_parse_plmn_id_nid(
+                &amf_ue->handover.source_plmn_id,
+                CreateData->serving_network);
+        amf_ue->handover.source_plmn_id_presence = true;
+    }
+
+    r = amf_namf_comm_decode_ue_context(
+            amf_ue, CreateData->ue_context, false);
+    if (r != OGS_OK)
+        goto cleanup;
+
+    if (!SECURITY_CONTEXT_IS_VALID(amf_ue) ||
+        !amf_ue->allowed_nssai.num_of_s_nssai) {
+        ogs_error("[%s] Transferred handover context is incomplete",
+                ue_context_id);
+        goto cleanup;
+    }
+
+    sess = amf_sess_find_by_psi(
+            amf_ue, N2SmInformation->pdu_session_id);
+    if (!sess ||
+        (!SESSION_CONTEXT_IN_SMF(sess) &&
+         !sess->inter_plmn_handover.pending)) {
+        ogs_error("[%s:%d] No transferred or relocatable SM context",
+                ue_context_id, N2SmInformation->pdu_session_id);
+        goto cleanup;
+    }
+
+    amf_ue->handover.create_ue_context_stream_id =
+        ogs_sbi_id_from_stream(stream);
+    amf_ue->handover.n2_notify_uri =
+        ogs_strdup(CreateData->n2_notify_uri);
+    ogs_assert(amf_ue->handover.n2_notify_uri);
+
+    amf_ue->handover.type = NGAP_HandoverType_intra5gs;
+    amf_ue->handover.group = CreateData->ngap_cause->group;
+    amf_ue->handover.cause = CreateData->ngap_cause->value;
+
+    OGS_ASN_CLEAR_DATA(&amf_ue->handover.container);
+    ogs_asn_buffer_to_OCTET_STRING(
+            source_to_target->data, source_to_target->len,
+            &amf_ue->handover.container);
+
+    if (sess->inter_plmn_handover.pending) {
+        sess->inter_plmn_handover.handover_required =
+            ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
+        if (!sess->inter_plmn_handover.handover_required)
+            goto cleanup;
+        ogs_pkbuf_put_data(
+                sess->inter_plmn_handover.handover_required,
+                handover_required->data, handover_required->len);
+
+        sess->inter_plmn_handover.target_id =
+            OpenAPI_ng_ran_target_id_copy(
+                    NULL, CreateData->target_id);
+        if (!sess->inter_plmn_handover.target_id)
+            goto cleanup;
+
+        r = amf_sbi_start_inter_plmn_handover(target_ue, sess);
+        if (r != OGS_OK)
+            goto cleanup;
+
+        ogs_info("[%s:%d] CreateUEContext accepted; selecting target V-SMF "
+                "for HR inter-PLMN handover",
+                ue_context_id, sess->psi);
+        return OGS_OK;
+    }
+
+    param.n2smbuf = ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
+    if (!param.n2smbuf)
+        goto cleanup;
+    ogs_pkbuf_put_data(
+            param.n2smbuf, handover_required->data, handover_required->len);
+    param.n2SmInfoType = OpenAPI_n2_sm_info_type_HANDOVER_REQUIRED;
+    param.hoState = OpenAPI_ho_state_PREPARING;
+    param.targetId = CreateData->target_id;
+    param.ngApCause.group = CreateData->ngap_cause->group;
+    param.ngApCause.value = CreateData->ngap_cause->value;
+
+    r = amf_sess_sbi_discover_and_send_handover(
+            OpenAPI_service_name_nsmf_pdusession, NULL,
+            amf_nsmf_pdusession_build_update_sm_context,
+            target_ue, sess,
+            AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQUIRED, &param);
+
+    ogs_pkbuf_free(param.n2smbuf);
+    param.n2smbuf = NULL;
+
+    if (r != OGS_OK)
+        goto cleanup;
+
+    ogs_info("[%s] CreateUEContext accepted for target handover "
+            "[gNB-ID:0x%x]", ue_context_id, target_gnb_id);
+
+    /*
+     * Do not answer the PUT yet.  The 201 Created response is completed
+     * only after target NG-RAN handover preparation and the SMF
+     * HandoverRequestAcknowledge processing have both succeeded.
+     */
+    return OGS_OK;
+
+cleanup:
+    if (param.n2smbuf)
+        ogs_pkbuf_free(param.n2smbuf);
+    if (amf_ue)
+        amf_ue_remove(amf_ue);
+    if (target_ue)
+        ran_ue_remove(target_ue);
+
+    return OGS_ERROR;
+}
+
+int amf_namf_comm_fail_create_ue_context(
+        amf_ue_t *amf_ue, NGAP_Cause_t *cause)
+{
+    ogs_sbi_stream_t *stream = NULL;
+    ogs_sbi_message_t sendmsg;
+    ogs_sbi_response_t *response = NULL;
+    OpenAPI_ue_context_create_error_t create_error;
+    OpenAPI_problem_details_t problem;
+    OpenAPI_ng_ap_cause_t ngap_cause;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_target);
+
+    if (amf_ue->handover.create_ue_context_stream_id < OGS_MIN_POOL_ID ||
+        amf_ue->handover.create_ue_context_stream_id > OGS_MAX_POOL_ID) {
+        ogs_warn("[%s] No pending CreateUEContext stream to fail",
+                amf_ue->supi);
+        return OGS_NOTFOUND;
+    }
+
+    stream = ogs_sbi_stream_find_by_id(
+            amf_ue->handover.create_ue_context_stream_id);
+    if (!stream) {
+        amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
+        return OGS_NOTFOUND;
+    }
+
+    memset(&sendmsg, 0, sizeof(sendmsg));
+    memset(&create_error, 0, sizeof(create_error));
+    memset(&problem, 0, sizeof(problem));
+    memset(&ngap_cause, 0, sizeof(ngap_cause));
+
+    problem.title = (char *)"Target handover preparation failed";
+    problem.detail = (char *)"Target NG-RAN rejected the HandoverRequest";
+    problem.is_status = true;
+    problem.status = OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    problem.cause = (char *)"HANDOVER_FAILURE";
+    create_error.error = &problem;
+
+    if (cause) {
+        ngap_cause.group = cause->present;
+        ngap_cause.value = (int)cause->choice.radioNetwork;
+        create_error.ngap_cause = &ngap_cause;
+    }
+
+    sendmsg.UeContextCreateError = &create_error;
+    response = ogs_sbi_build_response(
+            &sendmsg, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
+    if (!response)
+        return OGS_ERROR;
+
+    if (ogs_sbi_server_send_response(stream, response) != true)
+        return OGS_ERROR;
+
+    amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
+    ogs_info("[%s] CreateUEContext failed after target HandoverFailure",
+            amf_ue->supi);
+    return OGS_OK;
+}
+
+int amf_namf_comm_complete_release_ue_context(amf_ue_t *amf_ue)
+{
+    int r = OGS_OK;
+    ogs_sbi_stream_t *stream = NULL;
+    ran_ue_t *target_ue = NULL;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_target);
+
+    if (amf_ue->handover.release_ue_context_stream_id >= OGS_MIN_POOL_ID &&
+        amf_ue->handover.release_ue_context_stream_id <= OGS_MAX_POOL_ID) {
+        stream = ogs_sbi_stream_find_by_id(
+                amf_ue->handover.release_ue_context_stream_id);
+        if (stream) {
+            if (ogs_sbi_send_http_status_no_content(stream) != true) {
+                ogs_error("[%s] Cannot send ReleaseUEContext response",
+                        amf_ue->supi);
+                r = OGS_ERROR;
+            }
+        } else {
+            ogs_warn("[%s] ReleaseUEContext stream already closed",
+                    amf_ue->supi);
+        }
+    }
+    amf_ue->handover.release_ue_context_stream_id = OGS_INVALID_POOL_ID;
+
+    target_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (target_ue) {
+        int rv = ngap_send_ran_ue_context_release_command(
+                target_ue,
+                NGAP_Cause_PR_radioNetwork,
+                NGAP_CauseRadioNetwork_handover_cancelled,
+                NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+        if (rv != OGS_OK) {
+            ogs_error("[%s] Cannot release target NG context after cancel "
+                    "[error:%d]", amf_ue->supi, rv);
+            r = rv;
+        }
+    } else {
+        /*
+         * No target NG context remains; the transferred AMF UE context has
+         * no owner after cancellation and can be removed immediately.
+         */
+        amf_ue_remove(amf_ue);
+    }
+
+    return r;
+}
+
+int amf_namf_comm_handle_release_ue_context_request(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
+{
+    int r;
+    int xact_count;
+    amf_ue_t *amf_ue = NULL;
+    ran_ue_t *target_ue = NULL;
+    amf_sess_t *sess = NULL;
+    OpenAPI_ue_context_release_t *release = NULL;
+    char *ue_context_id = NULL;
+    amf_nsmf_pdusession_sm_context_param_t param;
+
+    ogs_assert(stream);
+    ogs_assert(recvmsg);
+
+    release = recvmsg->UeContextRelease;
+    ue_context_id = recvmsg->h.resource.component[1];
+    if (!release || !ue_context_id || !release->supi ||
+        strcmp(ue_context_id, release->supi) != 0) {
+        ogs_error("Invalid UeContextRelease");
+        return OGS_ERROR;
+    }
+
+    amf_ue = amf_ue_find_by_supi(ue_context_id);
+    if (!amf_ue || !amf_ue->handover.inter_amf_target) {
+        ogs_error("[%s] No target inter-AMF UE context", ue_context_id);
+        return OGS_NOTFOUND;
+    }
+
+    target_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    amf_ue->handover.release_ue_context_stream_id =
+        ogs_sbi_id_from_stream(stream);
+
+    xact_count = amf_sess_xact_count(amf_ue);
+    ogs_list_for_each(&amf_ue->sess_list, sess) {
+        if (!SESSION_CONTEXT_IN_SMF(sess))
+            continue;
+
+        memset(&param, 0, sizeof(param));
+        param.hoState = OpenAPI_ho_state_CANCELLED;
+        if (release->ngap_cause) {
+            param.ngApCause.group = release->ngap_cause->group;
+            param.ngApCause.value = release->ngap_cause->value;
+        }
+
+        r = amf_sess_sbi_discover_and_send_handover(
+                OpenAPI_service_name_nsmf_pdusession, NULL,
+                amf_nsmf_pdusession_build_update_sm_context,
+                target_ue, sess,
+                AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_CANCEL, &param);
+        if (r != OGS_OK)
+            return r;
+    }
+
+    if (xact_count == amf_sess_xact_count(amf_ue))
+        return amf_namf_comm_complete_release_ue_context(amf_ue);
+
+    ogs_info("[%s] ReleaseUEContext accepted; waiting for SMF cancel",
+            amf_ue->supi);
+    return OGS_OK;
+}
+
+int amf_namf_comm_send_create_ue_context_response(amf_ue_t *amf_ue)
+{
+    int i, rv = OGS_ERROR;
+    ogs_sbi_stream_t *stream = NULL;
+    ogs_sbi_server_t *server = NULL;
+    ogs_sbi_header_t header;
+    ogs_sbi_message_t sendmsg;
+    ogs_sbi_response_t *response = NULL;
+    OpenAPI_ue_context_created_data_t CreatedData;
+    OpenAPI_ue_context_t UeContext;
+    OpenAPI_n2_info_content_t TargetToSourceData;
+    OpenAPI_ref_to_binary_data_t TargetToSourceRef;
+    OpenAPI_list_t *PduSessionList = NULL;
+    OpenAPI_lnode_t *node = NULL;
+    amf_sess_t *sess = NULL;
+
+    ogs_assert(amf_ue);
+
+    if (!amf_ue->handover.inter_amf_target ||
+        amf_ue->handover.create_ue_context_stream_id < OGS_MIN_POOL_ID ||
+        amf_ue->handover.create_ue_context_stream_id > OGS_MAX_POOL_ID) {
+        ogs_error("[%s] No pending CreateUEContext transaction",
+                amf_ue->supi);
+        return OGS_ERROR;
+    }
+
+    stream = ogs_sbi_stream_find_by_id(
+            amf_ue->handover.create_ue_context_stream_id);
+    if (!stream) {
+        ogs_error("[%s] CreateUEContext stream has already been removed",
+                amf_ue->supi);
+        amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
+        return OGS_NOTFOUND;
+    }
+
+    memset(&sendmsg, 0, sizeof(sendmsg));
+    memset(&CreatedData, 0, sizeof(CreatedData));
+    memset(&UeContext, 0, sizeof(UeContext));
+    memset(&TargetToSourceData, 0, sizeof(TargetToSourceData));
+    memset(&TargetToSourceRef, 0, sizeof(TargetToSourceRef));
+
+    UeContext.supi = amf_ue->supi;
+    CreatedData.ue_context = &UeContext;
+
+    if (!amf_ue->handover.container.buf ||
+        !amf_ue->handover.container.size) {
+        ogs_error("[%s] No Target-to-Source Transparent Container",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    TargetToSourceRef.content_id = (char *)"target-to-source-container";
+    TargetToSourceData.ngap_ie_type =
+        OpenAPI_ngap_ie_type_TAR_TO_SRC_CONTAINER;
+    TargetToSourceData.ngap_data = &TargetToSourceRef;
+    CreatedData.target_to_source_data = &TargetToSourceData;
+
+    sendmsg.part[sendmsg.num_of_part].pkbuf =
+        ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
+    if (!sendmsg.part[sendmsg.num_of_part].pkbuf)
+        goto cleanup;
+    ogs_pkbuf_put_data(sendmsg.part[sendmsg.num_of_part].pkbuf,
+            amf_ue->handover.container.buf,
+            amf_ue->handover.container.size);
+    sendmsg.part[sendmsg.num_of_part].content_id =
+        TargetToSourceRef.content_id;
+    sendmsg.part[sendmsg.num_of_part].content_type =
+        (char *)OGS_SBI_CONTENT_NGAP_TYPE;
+    sendmsg.num_of_part++;
+
+    PduSessionList = OpenAPI_list_create();
+    ogs_assert(PduSessionList);
+
+    ogs_list_for_each(&amf_ue->sess_list, sess) {
+        OpenAPI_n2_sm_information_t *N2SmInformation = NULL;
+        OpenAPI_n2_info_content_t *N2InfoContent = NULL;
+        OpenAPI_ref_to_binary_data_t *N2Ref = NULL;
+        OpenAPI_snssai_t *SNssai = NULL;
+        char *content_id = NULL;
+
+        if (!sess->transfer.handover_command)
+            continue;
+
+        if (sendmsg.num_of_part >= OGS_SBI_MAX_NUM_OF_PART) {
+            ogs_error("[%s] Too many CreateUEContext response parts",
+                    amf_ue->supi);
+            goto cleanup;
+        }
+
+        N2SmInformation = ogs_calloc(1, sizeof(*N2SmInformation));
+        N2InfoContent = ogs_calloc(1, sizeof(*N2InfoContent));
+        N2Ref = ogs_calloc(1, sizeof(*N2Ref));
+        SNssai = ogs_calloc(1, sizeof(*SNssai));
+        ogs_assert(N2SmInformation);
+        ogs_assert(N2InfoContent);
+        ogs_assert(N2Ref);
+        ogs_assert(SNssai);
+
+        content_id = ogs_msprintf("handover-command-%d", sess->psi);
+        ogs_assert(content_id);
+
+        N2Ref->content_id = content_id;
+        N2InfoContent->ngap_ie_type = OpenAPI_ngap_ie_type_HANDOVER_CMD;
+        N2InfoContent->ngap_data = N2Ref;
+
+        SNssai->sst = sess->s_nssai.sst;
+        SNssai->sd = ogs_s_nssai_sd_to_string(sess->s_nssai.sd);
+
+        N2SmInformation->pdu_session_id = sess->psi;
+        N2SmInformation->n2_info_content = N2InfoContent;
+        N2SmInformation->s_nssai = SNssai;
+        OpenAPI_list_add(PduSessionList, N2SmInformation);
+
+        sendmsg.part[sendmsg.num_of_part].pkbuf =
+            ogs_pkbuf_copy(sess->transfer.handover_command);
+        if (!sendmsg.part[sendmsg.num_of_part].pkbuf)
+            goto cleanup;
+        sendmsg.part[sendmsg.num_of_part].content_id = content_id;
+        sendmsg.part[sendmsg.num_of_part].content_type =
+            (char *)OGS_SBI_CONTENT_NGAP_TYPE;
+        sendmsg.num_of_part++;
+    }
+
+    if (!PduSessionList->count) {
+        ogs_error("[%s] No prepared PDU session for CreateUEContext response",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    CreatedData.pdu_session_list = PduSessionList;
+    sendmsg.UeContextCreatedData = &CreatedData;
+
+    /*
+     * TS 29.518 CreateUEContext returns the URI of the target AMF UE
+     * context. The source retains it for ReleaseUEContext on HandoverCancel.
+     */
+    server = ogs_sbi_server_from_stream(stream);
+    ogs_assert(server);
+    memset(&header, 0, sizeof(header));
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_namf_comm);
+    header.api.version = (char *)OGS_SBI_API_V1;
+    header.resource.component[0] =
+        (char *)OGS_SBI_RESOURCE_NAME_UE_CONTEXTS;
+    header.resource.component[1] = amf_ue->supi;
+    sendmsg.http.location = ogs_sbi_server_uri(server, &header);
+    if (!sendmsg.http.location) {
+        ogs_error("[%s] Cannot build target UE context Location",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    response = ogs_sbi_build_response(
+            &sendmsg, OGS_SBI_HTTP_STATUS_CREATED);
+    if (!response) {
+        ogs_error("[%s] Cannot build CreateUEContext response",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    if (ogs_sbi_server_send_response(stream, response) != true) {
+        ogs_error("[%s] Cannot send CreateUEContext response",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    ogs_info("[%s] Target AMF completed CreateUEContext", amf_ue->supi);
+    amf_ue->handover.create_ue_context_stream_id = OGS_INVALID_POOL_ID;
+    rv = OGS_OK;
+
+cleanup:
+    for (i = 0; i < sendmsg.num_of_part; i++) {
+        if (sendmsg.part[i].pkbuf) {
+            ogs_pkbuf_free(sendmsg.part[i].pkbuf);
+            sendmsg.part[i].pkbuf = NULL;
+        }
+    }
+
+    if (sendmsg.http.location)
+        ogs_free(sendmsg.http.location);
+
+    if (PduSessionList) {
+        OpenAPI_list_for_each(PduSessionList, node) {
+            OpenAPI_n2_sm_information_t *n2 = node->data;
+            OpenAPI_n2_sm_information_free(n2);
+        }
+        OpenAPI_list_free(PduSessionList);
+    }
+
+    return rv;
+}
+
+
+int amf_namf_comm_handle_create_ue_context_response(
+        ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue)
+{
+    int r;
+    ran_ue_t *source_ue = NULL;
+    amf_sess_t *sess = NULL;
+    OpenAPI_ue_context_created_data_t *created = NULL;
+    OpenAPI_n2_info_content_t *n2_info = NULL;
+    OpenAPI_ref_to_binary_data_t *ref = NULL;
+    OpenAPI_lnode_t *node = NULL;
+    ogs_pkbuf_t *n2buf = NULL;
+    NGAP_Cause_t failure_cause;
+
+    ogs_assert(recvmsg);
+    ogs_assert(amf_ue);
+
+    source_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (!source_ue) {
+        ogs_error("[%s] Source NG context has already been removed",
+                amf_ue->supi);
+        return OGS_NOTFOUND;
+    }
+
+    if (recvmsg->res_status != OGS_SBI_HTTP_STATUS_CREATED) {
+        ogs_error("[%s] CreateUEContext failed [HTTP:%d]",
+                amf_ue->supi, recvmsg->res_status);
+        goto preparation_failure;
+    }
+
+    if (!recvmsg->http.location) {
+        ogs_error("[%s] CreateUEContext response has no Location",
+                amf_ue->supi);
+        goto preparation_failure;
+    }
+    if (amf_ue->handover.target_ue_context_uri)
+        ogs_free(amf_ue->handover.target_ue_context_uri);
+    amf_ue->handover.target_ue_context_uri =
+        ogs_strdup(recvmsg->http.location);
+    ogs_assert(amf_ue->handover.target_ue_context_uri);
+
+    created = recvmsg->UeContextCreatedData;
+    if (!created || !created->ue_context ||
+        !created->target_to_source_data ||
+        !created->pdu_session_list ||
+        created->pdu_session_list->count == 0) {
+        ogs_error("[%s] Incomplete UeContextCreatedData", amf_ue->supi);
+        goto preparation_failure;
+    }
+
+    n2_info = created->target_to_source_data;
+    if (n2_info->ngap_ie_type != OpenAPI_ngap_ie_type_TAR_TO_SRC_CONTAINER ||
+        !n2_info->ngap_data || !n2_info->ngap_data->content_id) {
+        ogs_error("[%s] Invalid Target-to-Source Transparent Container",
+                amf_ue->supi);
+        goto preparation_failure;
+    }
+
+    ref = n2_info->ngap_data;
+    n2buf = ogs_sbi_find_part_by_content_id(recvmsg, ref->content_id);
+    if (!n2buf) {
+        ogs_error("[%s] Missing Target-to-Source binary part [%s]",
+                amf_ue->supi, ref->content_id);
+        goto preparation_failure;
+    }
+
+    OGS_ASN_CLEAR_DATA(&amf_ue->handover.container);
+    ogs_asn_buffer_to_OCTET_STRING(
+            n2buf->data, n2buf->len, &amf_ue->handover.container);
+
+    /* Do not let a previous handover leave stale Handover Command Transfer. */
+    AMF_UE_CLEAR_N2_TRANSFER(amf_ue, handover_command);
+
+    OpenAPI_list_for_each(created->pdu_session_list, node) {
+        OpenAPI_n2_sm_information_t *n2sm = node->data;
+        ogs_pkbuf_t *copy = NULL;
+
+        if (!n2sm ||
+            n2sm->pdu_session_id ==
+                OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED ||
+            !n2sm->n2_info_content) {
+            ogs_error("[%s] Invalid PDU session in CreateUEContext response",
+                    amf_ue->supi);
+            goto preparation_failure;
+        }
+
+        sess = amf_sess_find_by_psi(amf_ue, n2sm->pdu_session_id);
+        if (!sess) {
+            ogs_error("[%s:%d] Unknown PDU session in CreateUEContext response",
+                    amf_ue->supi, n2sm->pdu_session_id);
+            goto preparation_failure;
+        }
+
+        n2_info = n2sm->n2_info_content;
+        if (n2_info->ngap_ie_type != OpenAPI_ngap_ie_type_HANDOVER_CMD ||
+            !n2_info->ngap_data || !n2_info->ngap_data->content_id) {
+            ogs_error("[%s:%d] Invalid Handover Command Transfer",
+                    amf_ue->supi, sess->psi);
+            goto preparation_failure;
+        }
+
+        n2buf = ogs_sbi_find_part_by_content_id(
+                recvmsg, n2_info->ngap_data->content_id);
+        if (!n2buf) {
+            ogs_error("[%s:%d] Missing Handover Command binary part [%s]",
+                    amf_ue->supi, sess->psi,
+                    n2_info->ngap_data->content_id);
+            goto preparation_failure;
+        }
+
+        copy = ogs_pkbuf_copy(n2buf);
+        if (!copy) {
+            ogs_error("[%s:%d] Cannot copy Handover Command Transfer",
+                    amf_ue->supi, sess->psi);
+            goto preparation_failure;
+        }
+        AMF_SESS_STORE_N2_TRANSFER(sess, handover_command, copy);
+    }
+
+    if (created->failed_session_list &&
+            created->failed_session_list->count) {
+        /*
+         * M1 intentionally targets a single successfully handed-over PDU
+         * session.  Do not silently drop Handover Preparation Unsuccessful
+         * Transfer IEs; support for the NGAP release list is a later
+         * increment.
+         */
+        ogs_error("[%s] failedSessionList is not supported in M1",
+                amf_ue->supi);
+        goto preparation_failure;
+    }
+
+    r = ngap_send_handover_command(amf_ue);
+    if (r != OGS_OK) {
+        ogs_error("[%s] Cannot send HandoverCommand [error:%d]",
+                amf_ue->supi, r);
+        return r;
+    }
+
+    ogs_info("[%s] Inter-AMF handover preparation completed at source AMF",
+            amf_ue->supi);
+    return OGS_OK;
+
+preparation_failure:
+    AMF_UE_CLEAR_N2_TRANSFER(amf_ue, handover_command);
+
+    memset(&failure_cause, 0, sizeof(failure_cause));
+    failure_cause.present = NGAP_Cause_PR_radioNetwork;
+    failure_cause.choice.radioNetwork =
+        NGAP_CauseRadioNetwork_ho_failure_in_target_5GC_ngran_node_or_target_system;
+
+    r = ngap_send_handover_preparation_failure(source_ue, &failure_cause);
+    ogs_expect(r == OGS_OK);
+    return OGS_ERROR;
+}
 
 int amf_namf_comm_handle_n1_n2_message_transfer(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
@@ -65,12 +963,6 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
         return OGS_ERROR;
     }
 
-    if (N1N2MessageTransferReqData->is_pdu_session_id == false) {
-        ogs_error("No PDU Session Identity");
-        return OGS_ERROR;
-    }
-    pdu_session_id = N1N2MessageTransferReqData->pdu_session_id;
-
     supi = recvmsg->h.resource.component[1];
     if (!supi) {
         ogs_error("No SUPI");
@@ -82,6 +974,100 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
         ogs_error("No UE context [%s]", supi);
         return OGS_ERROR;
     }
+
+    /*
+     * TS 23.502 4.9.1.3.3 inter-AMF execution phase:
+     * RAN Status Transfer is AMF/RAN information, not PDU-session SM
+     * information. Handle it before the legacy SM-specific PSI checks.
+     */
+    n2InfoContainer = N1N2MessageTransferReqData->n2_info_container;
+    if (n2InfoContainer &&
+        n2InfoContainer->n2_information_class ==
+            OpenAPI_n2_information_class_RAN) {
+        OpenAPI_n2_ran_information_t *ranInfo = n2InfoContainer->ran_info;
+        NGAP_RANStatusTransfer_TransparentContainer_t transfer;
+        ogs_pkbuf_t *ranbuf = NULL;
+
+        if (!amf_ue->handover.inter_amf_target) {
+            ogs_error("[%s] RAN status relay received outside target "
+                    "inter-AMF handover", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        if (!ranInfo || !ranInfo->n2_info_content) {
+            ogs_error("[%s] No RAN N2 information content", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        n2InfoContent = ranInfo->n2_info_content;
+        if (n2InfoContent->ngap_ie_type !=
+                OpenAPI_ngap_ie_type_RAN_STATUS_TRANS_CONTAINER) {
+            ogs_error("[%s] Unsupported RAN N2 IE type [%d]",
+                    amf_ue->supi, n2InfoContent->ngap_ie_type);
+            return OGS_ERROR;
+        }
+
+        ngapData = n2InfoContent->ngap_data;
+        if (!ngapData || !ngapData->content_id) {
+            ogs_error("[%s] No RAN status NGAP data reference", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        ranbuf = ogs_sbi_find_part_by_content_id(
+                recvmsg, ngapData->content_id);
+        if (!ranbuf) {
+            ogs_error("[%s] No RAN status binary part", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        ran_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+        if (!ran_ue) {
+            ogs_error("[%s] Target NG context has been removed", amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        memset(&transfer, 0, sizeof(transfer));
+        r = ogs_asn_decode(
+                &asn_DEF_NGAP_RANStatusTransfer_TransparentContainer,
+                &transfer, sizeof(transfer), ranbuf);
+        if (r != OGS_OK) {
+            ogs_error("[%s] Cannot decode RAN status transfer container",
+                    amf_ue->supi);
+            return OGS_ERROR;
+        }
+
+        r = ngap_send_downlink_ran_status_transfer(ran_ue, &transfer);
+        ogs_asn_free(
+                &asn_DEF_NGAP_RANStatusTransfer_TransparentContainer,
+                &transfer);
+        if (r != OGS_OK) {
+            ogs_error("[%s] Cannot send DownlinkRANStatusTransfer [error:%d]",
+                    amf_ue->supi, r);
+            return r;
+        }
+
+        memset(&sendmsg, 0, sizeof(sendmsg));
+        memset(&N1N2MessageTransferRspData, 0,
+                sizeof(N1N2MessageTransferRspData));
+        N1N2MessageTransferRspData.cause =
+            OpenAPI_n1_n2_message_transfer_cause_N1_N2_TRANSFER_INITIATED;
+        sendmsg.N1N2MessageTransferRspData = &N1N2MessageTransferRspData;
+
+        response = ogs_sbi_build_response(
+                &sendmsg, OGS_SBI_HTTP_STATUS_OK);
+        ogs_assert(response);
+        ogs_assert(true == ogs_sbi_server_send_response(stream, response));
+
+        ogs_info("[%s] Relayed inter-AMF RAN status transfer to target gNB",
+                amf_ue->supi);
+        return OGS_OK;
+    }
+
+    if (N1N2MessageTransferReqData->is_pdu_session_id == false) {
+        ogs_error("No PDU Session Identity");
+        return OGS_ERROR;
+    }
+    pdu_session_id = N1N2MessageTransferReqData->pdu_session_id;
 
     sess = amf_sess_find_by_psi(amf_ue, pdu_session_id);
     if (!sess) {
@@ -508,6 +1494,98 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
     if (sendmsg.http.location)
         ogs_free(sendmsg.http.location);
 
+    return OGS_OK;
+}
+
+int amf_namf_callback_handle_n2_info_notify(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
+{
+    int r;
+    int status = OGS_SBI_HTTP_STATUS_NO_CONTENT;
+    amf_ue_t *amf_ue = NULL;
+    ran_ue_t *source_ue = NULL;
+    OpenAPI_n2_information_notification_t *notification = NULL;
+    ogs_sbi_message_t sendmsg;
+    ogs_sbi_response_t *response = NULL;
+
+    ogs_assert(stream);
+    ogs_assert(recvmsg);
+
+    if (!recvmsg->h.resource.component[0]) {
+        status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
+        ogs_error("No SUPI in N2InfoNotify URI");
+        goto respond;
+    }
+
+    amf_ue = amf_ue_find_by_supi(recvmsg->h.resource.component[0]);
+    if (!amf_ue) {
+        status = OGS_SBI_HTTP_STATUS_NOT_FOUND;
+        ogs_error("Cannot find SUPI [%s]",
+                recvmsg->h.resource.component[0]);
+        goto respond;
+    }
+
+    notification = recvmsg->N2InformationNotification;
+    if (!notification) {
+        status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
+        ogs_error("[%s] No N2InformationNotification", amf_ue->supi);
+        goto respond;
+    }
+
+    if (notification->notify_reason !=
+            OpenAPI_n2_info_notify_reason_HANDOVER_COMPLETED) {
+        status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
+        ogs_error("[%s] Unsupported N2InfoNotify reason [%d]",
+                amf_ue->supi, notification->notify_reason);
+        goto respond;
+    }
+
+    if (notification->n2_notify_subscription_id &&
+        strcmp(notification->n2_notify_subscription_id, amf_ue->supi) != 0) {
+        status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
+        ogs_error("[%s] N2InfoNotify subscription id mismatch [%s]",
+                amf_ue->supi,
+                notification->n2_notify_subscription_id);
+        goto respond;
+    }
+
+    source_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (!source_ue) {
+        status = OGS_SBI_HTTP_STATUS_NOT_FOUND;
+        ogs_error("[%s] Source NG context already removed", amf_ue->supi);
+        goto respond;
+    }
+
+respond:
+    memset(&sendmsg, 0, sizeof(sendmsg));
+    response = ogs_sbi_build_response(&sendmsg, status);
+    ogs_assert(response);
+    ogs_assert(true == ogs_sbi_server_send_response(stream, response));
+
+    if (status != OGS_SBI_HTTP_STATUS_NO_CONTENT)
+        return OGS_ERROR;
+
+    /*
+     * TS 23.502 4.9.1.3.3: after HANDOVER_COMPLETED from the target AMF,
+     * the source AMF supervises release of the source NG-RAN resources.
+     * This is an inter-AMF handover, so the old AMF-UE context is removed
+     * after UEContextReleaseComplete rather than being relinked to a local
+     * target RAN context as in the same-AMF handover path.
+     */
+    r = ngap_send_ran_ue_context_release_command(
+            source_ue,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_successful_handover,
+            NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE,
+            ogs_local_conf()->time.handover.duration);
+    if (r != OGS_OK) {
+        ogs_error("[%s] Cannot start source context release after "
+                "HANDOVER_COMPLETED [error:%d]", amf_ue->supi, r);
+        return r;
+    }
+
+    ogs_info("[%s] HANDOVER_COMPLETED received; source context release started",
+            amf_ue->supi);
     return OGS_OK;
 }
 
@@ -1107,14 +2185,6 @@ cleanup:
     return OGS_OK;
 }
 
-static char *amf_namf_comm_base64_encode_ue_security_capability(
-        ogs_nas_ue_security_capability_t ue_security_capability);
-static char *amf_namf_comm_base64_encode_5gmm_capability(amf_ue_t *amf_ue);
-static OpenAPI_list_t *amf_namf_comm_encode_ue_session_context_list(
-        amf_ue_t *amf_ue);
-static OpenAPI_list_t *amf_namf_comm_encode_ue_mm_context_list(
-        amf_ue_t *amf_ue);
-
 int amf_namf_comm_handle_ue_context_transfer_request(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
 {
@@ -1326,22 +2396,12 @@ static void amf_namf_comm_decode_ue_mm_context_list(
 static void amf_namf_comm_decode_ue_session_context_list(
             amf_ue_t *amf_ue, OpenAPI_list_t *SessionContextList);
 
-int amf_namf_comm_handle_ue_context_transfer_response(
-        ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue)
+static int amf_namf_comm_decode_ue_context(
+        amf_ue_t *amf_ue, OpenAPI_ue_context_t *UeContext,
+        bool save_to_release_session_list)
 {
-    OpenAPI_ue_context_t *UeContext = NULL;
-
-    if (!recvmsg->UeContextTransferRspData) {
-        ogs_error("No UeContextTransferRspData");
-        return OGS_ERROR;
-    }
-
-    if (!recvmsg->UeContextTransferRspData->ue_context) {
-        ogs_error("No UE context");
-        return OGS_ERROR;
-    }
-
-    UeContext = recvmsg->UeContextTransferRspData->ue_context;
+    ogs_assert(amf_ue);
+    ogs_assert(UeContext);
 
     if (!UeContext->supi) {
         ogs_error("No SUPI");
@@ -1349,9 +2409,8 @@ int amf_namf_comm_handle_ue_context_transfer_response(
     }
 
     amf_ue_set_supi(amf_ue, UeContext->supi);
-    if (!UeContext->supi_unauth_ind){
+    if (!UeContext->supi_unauth_ind)
         amf_ue->auth_result = OpenAPI_auth_result_AUTHENTICATION_SUCCESS;
-    }
 
     if (UeContext->pei) {
         if (amf_ue->pei)
@@ -1360,24 +2419,58 @@ int amf_namf_comm_handle_ue_context_transfer_response(
     }
 
     if (UeContext->sub_ue_ambr) {
-        amf_ue->ue_ambr.downlink =
-            ogs_sbi_bitrate_from_string(UeContext->sub_ue_ambr->downlink);
-        amf_ue->ue_ambr.uplink =
-            ogs_sbi_bitrate_from_string(UeContext->sub_ue_ambr->uplink);
+        if (UeContext->sub_ue_ambr->downlink)
+            amf_ue->ue_ambr.downlink =
+                ogs_sbi_bitrate_from_string(UeContext->sub_ue_ambr->downlink);
+        if (UeContext->sub_ue_ambr->uplink)
+            amf_ue->ue_ambr.uplink =
+                ogs_sbi_bitrate_from_string(UeContext->sub_ue_ambr->uplink);
     }
 
     if (UeContext->seaf_data) {
+        if (!UeContext->seaf_data->ng_ksi ||
+            !UeContext->seaf_data->key_amf ||
+            !UeContext->seaf_data->key_amf->key_val) {
+            ogs_error("[%s] Incomplete SEAF data", UeContext->supi);
+            return OGS_ERROR;
+        }
+
         if (UeContext->seaf_data->ng_ksi->tsc != OpenAPI_sc_type_NULL) {
             amf_ue->nas.ue.tsc =
                 (UeContext->seaf_data->ng_ksi->tsc ==
                  OpenAPI_sc_type_NATIVE) ? 0 : 1;
-            amf_ue->nas.ue.ksi = (uint8_t)UeContext->seaf_data->ng_ksi->ksi;
+            amf_ue->nas.ue.ksi =
+                (uint8_t)UeContext->seaf_data->ng_ksi->ksi;
 
-            ogs_ascii_to_hex(
-                UeContext->seaf_data->key_amf->key_val,
-                strlen(UeContext->seaf_data->key_amf->key_val),
-                amf_ue->kamf,
-                sizeof(amf_ue->kamf));
+            if (ogs_ascii_to_hex_checked(
+                    UeContext->seaf_data->key_amf->key_val,
+                    strlen(UeContext->seaf_data->key_amf->key_val),
+                    amf_ue->kamf, sizeof(amf_ue->kamf)) != OGS_OK) {
+                ogs_error("[%s] Invalid transferred AMF key", UeContext->supi);
+                return OGS_ERROR;
+            }
+
+            if (UeContext->seaf_data->nh) {
+                if (!UeContext->seaf_data->is_ncc ||
+                    UeContext->seaf_data->ncc < 0 ||
+                    UeContext->seaf_data->ncc > 7 ||
+                    ogs_ascii_to_hex_checked(
+                        UeContext->seaf_data->nh,
+                        strlen(UeContext->seaf_data->nh),
+                        amf_ue->nh, sizeof(amf_ue->nh)) != OGS_OK) {
+                    ogs_error("[%s] Invalid transferred NH/NCC",
+                            UeContext->supi);
+                    return OGS_ERROR;
+                }
+                amf_ue->nhcc = (uint8_t)UeContext->seaf_data->ncc;
+            }
+
+            /*
+             * A transferred KAMF is a usable 5GS NAS security context.
+             * The MM-context decoder restores the selected algorithms and
+             * NAS counters; mark the context available only after both
+             * pieces have been decoded below.
+             */
         }
     }
 
@@ -1406,214 +2499,56 @@ int amf_namf_comm_handle_ue_context_transfer_response(
     if (UeContext->session_context_list) {
         amf_namf_comm_decode_ue_session_context_list(
                 amf_ue, UeContext->session_context_list);
-        /* Save a list of sessions to be released on old AMF */
-        if (UeContext->mm_context_list)
+
+        if (save_to_release_session_list && UeContext->mm_context_list)
             amf_ue_save_to_release_session_list(amf_ue);
     }
+
+    if (UeContext->seaf_data &&
+        UeContext->seaf_data->key_amf &&
+        UeContext->seaf_data->key_amf->key_val &&
+        UeContext->mm_context_list) {
+        amf_ue->nas.amf.tsc = amf_ue->nas.ue.tsc;
+        amf_ue->nas.amf.ksi = amf_ue->nas.ue.ksi;
+
+        /*
+         * TS 33.501 Annex A.8: the target AMF receives KAMF plus the
+         * selected NAS algorithms in the transferred MM context.  Rebuild
+         * KNASint/KNASenc locally so post-handover NAS protection continues
+         * with the transferred security context.
+         */
+        ogs_kdf_nas_5gs(OGS_KDF_NAS_INT_ALG,
+                amf_ue->selected_int_algorithm,
+                amf_ue->kamf, amf_ue->knas_int);
+        ogs_kdf_nas_5gs(OGS_KDF_NAS_ENC_ALG,
+                amf_ue->selected_enc_algorithm,
+                amf_ue->kamf, amf_ue->knas_enc);
+
+        amf_ue->security_context_available = 1;
+        amf_ue->mac_failed = 0;
+        amf_ue->ul_count_accepted = true;
+    }
+
     /* TODO ueRadioCapability */
 
     return OGS_OK;
 }
 
-static char *amf_namf_comm_base64_encode_ue_security_capability(
-        ogs_nas_ue_security_capability_t ue_security_capability)
+int amf_namf_comm_handle_ue_context_transfer_response(
+        ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue)
 {
-    char *enc = NULL;
-    int enc_len = 0;
-
-    char num_of_octets =
-            ue_security_capability.length +
-            sizeof(ue_security_capability.length) +
-            sizeof((uint8_t)OGS_NAS_5GS_REGISTRATION_REQUEST_UE_SECURITY_CAPABILITY_TYPE);
-    /*
-     * size [sizeof(ue_security_capability) + 1] is a sum of lengths:
-     *        ue_security_capability (9 octets) +
-     *        type (1 octet)
-     */
-    char security_octets_string[sizeof(ue_security_capability) + 1];
-
-    /* Security guarantee */
-    num_of_octets = ogs_min(
-            num_of_octets, sizeof(ue_security_capability) + 1);
-    enc_len = ogs_base64_encoded_size(num_of_octets);
-
-    enc = ogs_calloc(1, enc_len);
-    ogs_assert(enc);
-
-    security_octets_string[0] = (uint8_t)
-        OGS_NAS_5GS_REGISTRATION_REQUEST_UE_SECURITY_CAPABILITY_TYPE;
-    memcpy(security_octets_string + 1, &ue_security_capability, num_of_octets);
-    ogs_assert(ogs_base64_encode_from_buffer(enc, enc_len,
-            (const uint8_t *)security_octets_string, num_of_octets) > 0);
-
-    return enc;
-}
-
-static char *amf_namf_comm_base64_encode_5gmm_capability(amf_ue_t *amf_ue)
-{
-    ogs_nas_5gmm_capability_t nas_gmm_capability;
-    int enc_len = 0;
-    char *enc = NULL;
-
-    memset(&nas_gmm_capability, 0, sizeof(nas_gmm_capability));
-
-    /* 1 octet is mandatory, n.3 from TS 24.501 V16.12.0, 9.11.3.1 */
-    nas_gmm_capability.length = 1;
-    nas_gmm_capability.lte_positioning_protocol_capability =
-            amf_ue->gmm_capability.lte_positioning_protocol_capability;
-    nas_gmm_capability.ho_attach = amf_ue->gmm_capability.ho_attach;
-    nas_gmm_capability.s1_mode = amf_ue->gmm_capability.s1_mode;
-
-    uint8_t num_of_octets;
-
-    char gmm_capability_octets_string[sizeof(ogs_nas_5gmm_capability_t) + 1];
-
-    num_of_octets =
-            nas_gmm_capability.length +
-            sizeof(nas_gmm_capability.length) +
-            sizeof((uint8_t)
-                    OGS_NAS_5GS_REGISTRATION_REQUEST_5GMM_CAPABILITY_TYPE);
-
-    /* Security guarantee. + 1 stands for 5GMM capability IEI */
-    num_of_octets = ogs_min(
-            num_of_octets, sizeof(ogs_nas_5gmm_capability_t) + 1);
-
-    enc_len = ogs_base64_encoded_size(num_of_octets);
-    enc = ogs_calloc(1, enc_len);
-    ogs_assert(enc);
-
-    /* Fill the bytes of data */
-    gmm_capability_octets_string[0] =
-            (uint8_t)OGS_NAS_5GS_REGISTRATION_REQUEST_5GMM_CAPABILITY_TYPE;
-    memcpy(gmm_capability_octets_string + 1,
-            &nas_gmm_capability, num_of_octets);
-    ogs_assert(ogs_base64_encode_from_buffer(enc, enc_len,
-            (const uint8_t *)gmm_capability_octets_string, num_of_octets) > 0);
-
-    return enc;
-}
-
-static OpenAPI_list_t *amf_namf_comm_encode_ue_session_context_list(
-        amf_ue_t *amf_ue)
-{
-    ogs_assert(amf_ue);
-
-    amf_sess_t *sess = NULL;
-    OpenAPI_list_t *PduSessionList = NULL;
-    OpenAPI_pdu_session_context_t *PduSessionContext = NULL;
-    OpenAPI_snssai_t *sNSSAI = NULL;
-
-    PduSessionList = OpenAPI_list_create();
-    ogs_assert(PduSessionList);
-
-    ogs_list_for_each(&amf_ue->sess_list, sess) {
-        PduSessionContext = ogs_calloc(1, sizeof(*PduSessionContext));
-        ogs_assert(PduSessionContext);
-
-        sNSSAI = ogs_calloc(1, sizeof(*sNSSAI));
-        ogs_assert(sNSSAI);
-
-        PduSessionContext->pdu_session_id = sess->psi;
-        ogs_assert(sess->sm_context_resource_uri);
-        PduSessionContext->sm_context_ref =
-            ogs_strdup(sess->sm_context_resource_uri);
-
-        sNSSAI->sst = sess->s_nssai.sst;
-        sNSSAI->sd = ogs_s_nssai_sd_to_string(sess->s_nssai.sd);
-        PduSessionContext->s_nssai = sNSSAI;
-
-        ogs_assert(sess->dnn);
-        PduSessionContext->dnn = ogs_strdup(sess->dnn);
-        PduSessionContext->access_type =
-            (OpenAPI_access_type_e)amf_ue->nas.access_type;
-
-        OpenAPI_list_add(PduSessionList, PduSessionContext);
+    if (!recvmsg->UeContextTransferRspData) {
+        ogs_error("No UeContextTransferRspData");
+        return OGS_ERROR;
     }
 
-    return PduSessionList;
-}
-
-static OpenAPI_list_t *amf_namf_comm_encode_ue_mm_context_list(amf_ue_t *amf_ue)
-{
-    OpenAPI_list_t *MmContextList = NULL;
-    OpenAPI_mm_context_t *MmContext = NULL;
-
-    int i;
-
-    ogs_assert(amf_ue);
-
-    MmContextList = OpenAPI_list_create();
-    ogs_assert(MmContextList);
-
-    MmContext = ogs_malloc(sizeof(*MmContext));
-    ogs_assert(MmContext);
-    memset(MmContext, 0, sizeof(*MmContext));
-
-    MmContext->access_type = (OpenAPI_access_type_e)amf_ue->nas.access_type;
-
-    if ((OpenAPI_ciphering_algorithm_e)amf_ue->selected_enc_algorithm &&
-        (OpenAPI_integrity_algorithm_e)amf_ue->selected_int_algorithm) {
-
-        OpenAPI_nas_security_mode_t *NasSecurityMode;
-
-        NasSecurityMode = ogs_calloc(1, sizeof(*NasSecurityMode));
-        ogs_assert(NasSecurityMode);
-
-        NasSecurityMode->ciphering_algorithm =
-                (OpenAPI_ciphering_algorithm_e)amf_ue->selected_enc_algorithm;
-        NasSecurityMode->integrity_algorithm =
-                (OpenAPI_integrity_algorithm_e)amf_ue->selected_int_algorithm;
-
-        MmContext->nas_security_mode = NasSecurityMode;
+    if (!recvmsg->UeContextTransferRspData->ue_context) {
+        ogs_error("No UE context");
+        return OGS_ERROR;
     }
 
-    if (amf_ue->dl_count > 0) {
-        MmContext->is_nas_downlink_count = true;
-        MmContext->nas_downlink_count = amf_ue->dl_count;
-    }
-
-    if (amf_ue->ul_count.i32 > 0) {
-        MmContext->is_nas_uplink_count = true;
-        MmContext->nas_uplink_count = amf_ue->ul_count.i32;
-    }
-
-    if (amf_ue->ue_security_capability.length > 0) {
-        MmContext->ue_security_capability =
-                amf_namf_comm_base64_encode_ue_security_capability(
-                amf_ue->ue_security_capability);
-    }
-
-    if (amf_ue->allowed_nssai.num_of_s_nssai) {
-
-        OpenAPI_list_t *AllowedNssaiList;
-
-        /* This IE shall be present if the source AMF and the target AMF are
-        *  in the same PLMN and if available. When present, this IE shall
-        * contain the allowed NSSAI for the access type.
-        */
-        AllowedNssaiList = OpenAPI_list_create();
-
-        ogs_assert(AllowedNssaiList);
-
-        for (i = 0; i < amf_ue->allowed_nssai.num_of_s_nssai; i++) {
-            OpenAPI_snssai_t *AllowedNssai;
-
-            AllowedNssai = ogs_calloc(1, sizeof(*AllowedNssai));
-            ogs_assert(AllowedNssai);
-
-            AllowedNssai->sst = amf_ue->allowed_nssai.s_nssai[i].sst;
-            AllowedNssai->sd = ogs_s_nssai_sd_to_string(
-                    amf_ue->allowed_nssai.s_nssai[i].sd);
-
-            OpenAPI_list_add(AllowedNssaiList, AllowedNssai);
-        }
-
-        MmContext->allowed_nssai = AllowedNssaiList;
-    }
-
-    OpenAPI_list_add(MmContextList, MmContext);
-
-    return MmContextList;
+    return amf_namf_comm_decode_ue_context(
+            amf_ue, recvmsg->UeContextTransferRspData->ue_context, true);
 }
 
 static ogs_nas_5gmm_capability_t
@@ -1711,6 +2646,21 @@ static void amf_namf_comm_decode_ue_mm_context_list(
             continue;
         }
 
+        if (MmContext->access_type != OpenAPI_access_type_NULL)
+            amf_ue->nas.access_type = (int)MmContext->access_type;
+
+        if (MmContext->nas_security_mode) {
+            amf_ue->selected_enc_algorithm =
+                (uint8_t)MmContext->nas_security_mode->ciphering_algorithm;
+            amf_ue->selected_int_algorithm =
+                (uint8_t)MmContext->nas_security_mode->integrity_algorithm;
+        }
+
+        if (MmContext->is_nas_downlink_count)
+            amf_ue->dl_count = (uint32_t)MmContext->nas_downlink_count;
+        if (MmContext->is_nas_uplink_count)
+            amf_ue->ul_count.i32 = (uint32_t)MmContext->nas_uplink_count;
+
         AllowedNssaiList = MmContext->allowed_nssai;
         NssaiMappingList = MmContext->nssai_mapping_list;
 
@@ -1781,8 +2731,7 @@ static void amf_namf_comm_decode_ue_session_context_list(
     OpenAPI_lnode_t *node = NULL;
 
     OpenAPI_list_for_each(SessionContextList, node) {
-        OpenAPI_pdu_session_context_t *PduSessionContext;
-        PduSessionContext = node->data;
+        OpenAPI_pdu_session_context_t *PduSessionContext = node->data;
         amf_sess_t *sess = NULL;
 
         int rv;
@@ -1790,15 +2739,17 @@ static void amf_namf_comm_decode_ue_session_context_list(
         ogs_sbi_header_t header;
 
         bool rc;
+        bool inter_plmn = false;
+        bool insert_vsmf = false;
         ogs_sbi_client_t *client = NULL;
         OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
         char *fqdn = NULL;
         uint16_t fqdn_port = 0;
         ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
 
-        if (!PduSessionContext->sm_context_ref) {
+        if (!PduSessionContext || !PduSessionContext->sm_context_ref) {
             ogs_error("No smContextRef [PSI:%d]",
-                    PduSessionContext->pdu_session_id);
+                    PduSessionContext ? PduSessionContext->pdu_session_id : 0);
             continue;
         }
 
@@ -1833,20 +2784,84 @@ static void amf_namf_comm_decode_ue_session_context_list(
             ogs_error("[%d] No SmContextRef [%s]",
                     PduSessionContext->pdu_session_id,
                     PduSessionContext->sm_context_ref);
-
             ogs_sbi_header_free(&header);
             continue;
         }
 
+        if (amf_ue->handover.inter_amf_target &&
+            amf_ue->handover.source_plmn_id_presence &&
+            memcmp(&amf_ue->handover.source_plmn_id,
+                   &amf_ue->nr_tai.plmn_id, OGS_PLMN_ID_LEN) != 0)
+            inter_plmn = true;
+
+        /*
+         * M3 first supported roaming transition: HPLMN -> VPLMN.
+         *
+         * In this case the source PDU Session Context points at the H-SMF,
+         * and hsmfId is present while vsmfId is absent.  The target AMF
+         * must not install that URI as its live serving SM context; it is
+         * retained as source/anchor metadata while a new V-SMF is selected.
+         */
+        if (inter_plmn) {
+            if (PduSessionContext->hsmf_id &&
+                !PduSessionContext->vsmf_id) {
+                insert_vsmf = true;
+            } else {
+                ogs_error("[%s:%d] Unsupported inter-PLMN SMF transition "
+                        "[hsmf:%s vsmf:%s]",
+                        amf_ue->supi,
+                        PduSessionContext->pdu_session_id,
+                        PduSessionContext->hsmf_id ?
+                            PduSessionContext->hsmf_id : "none",
+                        PduSessionContext->vsmf_id ?
+                            PduSessionContext->vsmf_id : "none");
+                ogs_sbi_header_free(&header);
+                continue;
+            }
+        }
+
         sess = amf_sess_add(amf_ue, PduSessionContext->pdu_session_id);
         ogs_assert(sess);
+
+        memset(&sess->s_nssai, 0, sizeof(sess->s_nssai));
+        sess->s_nssai.sst = PduSessionContext->s_nssai->sst;
+        sess->s_nssai.sd = ogs_s_nssai_sd_from_string(
+                PduSessionContext->s_nssai->sd);
+
+        sess->dnn = ogs_strdup(PduSessionContext->dnn);
+        amf_ue->nas.access_type = (int)PduSessionContext->access_type;
+
+        if (insert_vsmf) {
+            memcpy(&amf_ue->home_plmn_id,
+                    &amf_ue->handover.source_plmn_id,
+                    OGS_PLMN_ID_LEN);
+
+            sess->inter_plmn_handover.pending = true;
+            sess->inter_plmn_handover.source_sm_context_uri =
+                ogs_strdup(PduSessionContext->sm_context_ref);
+            sess->inter_plmn_handover.source_smf_id =
+                ogs_strdup(PduSessionContext->hsmf_id);
+            sess->inter_plmn_handover.source_smf_plmn_id_presence = true;
+            memcpy(&sess->inter_plmn_handover.source_smf_plmn_id,
+                    &amf_ue->handover.source_plmn_id,
+                    OGS_PLMN_ID_LEN);
+            sess->inter_plmn_handover.h_smf_id =
+                ogs_strdup(PduSessionContext->hsmf_id);
+
+            ogs_info("[%s:%d] Inter-PLMN HR handover: retain H-SMF [%s] "
+                    "and insert target V-SMF",
+                    amf_ue->supi, sess->psi,
+                    sess->inter_plmn_handover.h_smf_id);
+
+            ogs_sbi_header_free(&header);
+            continue;
+        }
 
         rc = ogs_sbi_getaddr_from_uri(
                 &scheme, &fqdn, &fqdn_port, &addr, &addr6, header.uri);
         if (rc == false || scheme == OpenAPI_uri_scheme_NULL) {
             ogs_error("[%s:%d] Invalid URI [%s]",
                     amf_ue->supi, sess->psi, header.uri);
-
             ogs_sbi_header_free(&header);
             continue;
         }
@@ -1860,11 +2875,9 @@ static void amf_namf_comm_decode_ue_session_context_list(
                         amf_ue->supi, sess->psi);
 
                 ogs_sbi_header_free(&header);
-
                 ogs_free(fqdn);
                 ogs_freeaddrinfo(addr);
                 ogs_freeaddrinfo(addr6);
-
                 continue;
             }
         }
@@ -1878,15 +2891,6 @@ static void amf_namf_comm_decode_ue_session_context_list(
             ogs_strdup(PduSessionContext->sm_context_ref);
         sess->sm_context_ref =
             ogs_strdup(message.h.resource.component[1]);
-
-        memset(&sess->s_nssai, 0, sizeof(sess->s_nssai));
-
-        sess->s_nssai.sst = PduSessionContext->s_nssai->sst;
-        sess->s_nssai.sd = ogs_s_nssai_sd_from_string(
-                PduSessionContext->s_nssai->sd);
-
-        sess->dnn = ogs_strdup(PduSessionContext->dnn);
-        amf_ue->nas.access_type = (int)PduSessionContext->access_type;
 
         ogs_sbi_header_free(&header);
     }

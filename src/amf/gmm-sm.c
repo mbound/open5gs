@@ -1567,6 +1567,26 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
         case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
+                /*
+                 * A bare Individual UE Context resource is the
+                 * Namf_Communication_CreateUEContext response.  Existing
+                 * registration-transfer operations use sub-resources below.
+                 */
+                if (!sbi_message->h.resource.component[2]) {
+                    if (state != AMF_CREATE_UE_CONTEXT_HANDOVER_REQUIRED) {
+                        ogs_error("[%s] Unexpected CreateUEContext response "
+                                "state [%d]", amf_ue->supi, state);
+                        break;
+                    }
+
+                    r = amf_namf_comm_handle_create_ue_context_response(
+                            sbi_message, amf_ue);
+                    if (r != OGS_OK)
+                        ogs_error("[%s] CreateUEContext response failed",
+                                amf_ue->supi);
+                    break;
+                }
+
                 SWITCH(sbi_message->h.resource.component[2])
                 CASE(OGS_SBI_RESOURCE_NAME_TRANSFER)
 

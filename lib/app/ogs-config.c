@@ -142,7 +142,13 @@ static int global_conf_validation(void)
 
 int ogs_app_count_nf_conf_sections(const char *conf_section)
 {
-    if (!strcmp(conf_section, "amf"))
+    if (!strcmp(conf_section, "nrf"))
+        global_conf.parameter.nrf_count++;
+    else if (!strcmp(conf_section, "scp"))
+        global_conf.parameter.scp_count++;
+    else if (!strcmp(conf_section, "sepp"))
+        global_conf.parameter.sepp_count++;
+    else if (!strcmp(conf_section, "amf"))
         global_conf.parameter.amf_count++;
     else if (!strcmp(conf_section, "smf"))
         global_conf.parameter.smf_count++;

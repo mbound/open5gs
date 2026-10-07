@@ -85,6 +85,12 @@ bool amf_sbi_send_request(
 #define AMF_REMOVE_S1_CONTEXT_BY_RESET_ALL              52
 #define AMF_REMOVE_S1_CONTEXT_BY_RESET_PARTIAL          53
 #define AMF_REMOVE_N2_CONTEXT_BY_ERROR_INDICATION       54
+#define AMF_CREATE_UE_CONTEXT_HANDOVER_REQUIRED         61
+#define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQUIRED 62
+#define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQ_ACK  63
+#define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_CANCEL   64
+#define AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_FAILURE  65
+#define AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER          66
 
 /*
  * TS23.502
@@ -100,7 +106,17 @@ int amf_ue_sbi_discover_and_send(
         ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
         amf_ue_t *amf_ue, int state, void *data);
 int amf_ue_sbi_discover_and_send_eir(amf_ue_t *amf_ue);
+int amf_ue_sbi_discover_and_send_handover(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
+        amf_ue_t *amf_ue, int state, void *data);
 int amf_sess_sbi_discover_and_send(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
+        ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data);
+int amf_sess_sbi_discover_and_send_handover(
         OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
@@ -110,6 +126,9 @@ int amf_sess_sbi_discover_by_nsi(
         ran_ue_t *ran_ue, amf_sess_t *sess,
         OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option, int state);
+
+int amf_sbi_start_inter_plmn_handover(
+        ran_ue_t *ran_ue, amf_sess_t *sess);
 
 void amf_sbi_send_activating_session(
         ran_ue_t *ran_ue, amf_sess_t *sess, int state);
@@ -130,6 +149,12 @@ void amf_sbi_send_release_all_sessions(
 
 bool amf_sbi_send_n1_n2_failure_notify(
         amf_sess_t *sess, OpenAPI_n1_n2_message_transfer_cause_e cause);
+bool amf_sbi_send_inter_amf_handover_complete(amf_ue_t *amf_ue);
+bool amf_sbi_send_inter_amf_handover_cancel(
+        amf_ue_t *amf_ue, NGAP_Cause_t *cause);
+bool amf_sbi_send_inter_amf_ran_status_transfer(
+        amf_ue_t *amf_ue,
+        NGAP_RANStatusTransfer_TransparentContainer_t *transfer);
 
 bool amf_ue_have_session_release_pending(amf_ue_t *amf_ue);
 bool amf_sess_have_session_release_pending(amf_sess_t *sess);

@@ -31,12 +31,14 @@ static ogs_sbi_nf_instance_t *test_nf_instance_new(OpenAPI_nf_type_e nf_type)
     nf_instance = ogs_calloc(1, sizeof(*nf_instance));
     ogs_assert(nf_instance);
     nf_instance->nf_type = nf_type;
+    ogs_list_init(&nf_instance->nf_info_list);
 
     return nf_instance;
 }
 
 static void test_nf_instance_free(ogs_sbi_nf_instance_t *nf_instance)
 {
+    ogs_sbi_nf_info_remove_all(&nf_instance->nf_info_list);
     ogs_free(nf_instance);
 }
 
@@ -430,6 +432,153 @@ static void nrf_discovery_test13(abts_case *tc, void *data)
     test_nf_instance_free(nf);
 }
 
+/* ----------------------------------------------------------------
+ * Test 14 - AMF TAI exact match
+ * ---------------------------------------------------------------- */
+static void nrf_discovery_test14(abts_case *tc, void *data)
+{
+    ogs_sbi_nf_instance_t *nf;
+    ogs_sbi_nf_info_t *info;
+    ogs_sbi_discovery_option_t *opt;
+    ogs_5gs_tai_t tai;
+    bool result;
+
+    nf = test_nf_instance_new(OpenAPI_nf_type_AMF);
+    info = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
+    ogs_assert(info);
+
+    memset(&tai, 0, sizeof(tai));
+    ogs_plmn_id_build(&tai.plmn_id, 1, 1, 2);
+    tai.tac.v = 0x000101;
+
+    info->amf.nr_tai[0] = tai;
+    info->amf.num_of_nr_tai = 1;
+
+    opt = ogs_sbi_discovery_option_new();
+    ogs_assert(opt);
+    ogs_sbi_discovery_option_set_tai(opt, &tai);
+
+    result = ogs_sbi_discovery_option_is_matched(
+                nf, OpenAPI_nf_type_AMF, opt);
+    ABTS_TRUE(tc, result == true);
+
+    ogs_sbi_discovery_option_free(opt);
+    test_nf_instance_free(nf);
+}
+
+/* ----------------------------------------------------------------
+ * Test 15 - AMF TAI mismatch rejects same-PLMN AMF
+ * ---------------------------------------------------------------- */
+static void nrf_discovery_test15(abts_case *tc, void *data)
+{
+    ogs_sbi_nf_instance_t *nf;
+    ogs_sbi_nf_info_t *info;
+    ogs_sbi_discovery_option_t *opt;
+    ogs_5gs_tai_t served_tai, query_tai;
+    bool result;
+
+    nf = test_nf_instance_new(OpenAPI_nf_type_AMF);
+    info = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
+    ogs_assert(info);
+
+    memset(&served_tai, 0, sizeof(served_tai));
+    ogs_plmn_id_build(&served_tai.plmn_id, 1, 1, 2);
+    served_tai.tac.v = 0x000101;
+    info->amf.nr_tai[0] = served_tai;
+    info->amf.num_of_nr_tai = 1;
+
+    query_tai = served_tai;
+    query_tai.tac.v = 0x000202;
+
+    opt = ogs_sbi_discovery_option_new();
+    ogs_assert(opt);
+    ogs_sbi_discovery_option_set_tai(opt, &query_tai);
+
+    result = ogs_sbi_discovery_option_is_matched(
+                nf, OpenAPI_nf_type_AMF, opt);
+    ABTS_TRUE(tc, result == false);
+
+    ogs_sbi_discovery_option_free(opt);
+    test_nf_instance_free(nf);
+}
+
+/* ----------------------------------------------------------------
+ * Test 16 - AMF TAI range match
+ * ---------------------------------------------------------------- */
+static void nrf_discovery_test16(abts_case *tc, void *data)
+{
+    ogs_sbi_nf_instance_t *nf;
+    ogs_sbi_nf_info_t *info;
+    ogs_sbi_discovery_option_t *opt;
+    ogs_5gs_tai_t query_tai;
+    bool result;
+
+    nf = test_nf_instance_new(OpenAPI_nf_type_AMF);
+    info = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
+    ogs_assert(info);
+
+    memset(&query_tai, 0, sizeof(query_tai));
+    ogs_plmn_id_build(&query_tai.plmn_id, 1, 1, 2);
+    query_tai.tac.v = 0x000180;
+
+    info->amf.nr_tai_range[0].plmn_id = query_tai.plmn_id;
+    info->amf.nr_tai_range[0].start[0].v = 0x000100;
+    info->amf.nr_tai_range[0].end[0].v = 0x0001ff;
+    info->amf.nr_tai_range[0].num_of_tac_range = 1;
+    info->amf.num_of_nr_tai_range = 1;
+
+    opt = ogs_sbi_discovery_option_new();
+    ogs_assert(opt);
+    ogs_sbi_discovery_option_set_tai(opt, &query_tai);
+
+    result = ogs_sbi_discovery_option_is_matched(
+                nf, OpenAPI_nf_type_AMF, opt);
+    ABTS_TRUE(tc, result == true);
+
+    ogs_sbi_discovery_option_free(opt);
+    test_nf_instance_free(nf);
+}
+
+/* ----------------------------------------------------------------
+ * Test 17 - AMF TAI may match a later amfInfo block
+ * ---------------------------------------------------------------- */
+static void nrf_discovery_test17(abts_case *tc, void *data)
+{
+    ogs_sbi_nf_instance_t *nf;
+    ogs_sbi_nf_info_t *first, *second;
+    ogs_sbi_discovery_option_t *opt;
+    ogs_5gs_tai_t query_tai;
+    bool result;
+
+    nf = test_nf_instance_new(OpenAPI_nf_type_AMF);
+    first = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
+    second = ogs_sbi_nf_info_add(&nf->nf_info_list, OpenAPI_nf_type_AMF);
+    ogs_assert(first);
+    ogs_assert(second);
+
+    memset(&query_tai, 0, sizeof(query_tai));
+    ogs_plmn_id_build(&query_tai.plmn_id, 1, 1, 2);
+    query_tai.tac.v = 0x000222;
+
+    first->amf.nr_tai[0] = query_tai;
+    first->amf.nr_tai[0].tac.v = 0x000111;
+    first->amf.num_of_nr_tai = 1;
+
+    second->amf.nr_tai[0] = query_tai;
+    second->amf.num_of_nr_tai = 1;
+
+    opt = ogs_sbi_discovery_option_new();
+    ogs_assert(opt);
+    ogs_sbi_discovery_option_set_tai(opt, &query_tai);
+
+    result = ogs_sbi_discovery_option_is_matched(
+                nf, OpenAPI_nf_type_AMF, opt);
+    ABTS_TRUE(tc, result == true);
+
+    ogs_sbi_discovery_option_free(opt);
+    test_nf_instance_free(nf);
+}
+
 abts_suite *test_nrf_discovery(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
@@ -447,6 +596,10 @@ abts_suite *test_nrf_discovery(abts_suite *suite)
     abts_run_test(suite, nrf_discovery_test11, NULL);
     abts_run_test(suite, nrf_discovery_test12, NULL);
     abts_run_test(suite, nrf_discovery_test13, NULL);
+    abts_run_test(suite, nrf_discovery_test14, NULL);
+    abts_run_test(suite, nrf_discovery_test15, NULL);
+    abts_run_test(suite, nrf_discovery_test16, NULL);
+    abts_run_test(suite, nrf_discovery_test17, NULL);
 
     return suite;
 }

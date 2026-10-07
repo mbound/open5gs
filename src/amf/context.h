@@ -45,6 +45,16 @@ typedef struct amf_ue_s amf_ue_t;
 
 typedef uint32_t amf_m_tmsi_t;
 
+#define AMF_MAX_NUM_OF_NTN_TAC 12
+typedef struct amf_nr_ntn_tai_info_s {
+    bool presence;
+    ogs_plmn_id_t serving_plmn;
+    int num_of_tac;
+    ogs_uint24_t tac[AMF_MAX_NUM_OF_NTN_TAC];
+    bool derived_tac_presence;
+    ogs_uint24_t derived_tac;
+} amf_nr_ntn_tai_info_t;
+
 typedef enum {
     UE_CONTEXT_INITIAL_STATE = 0,
     UE_CONTEXT_TRANSFER_OLD_AMF_STATE,
@@ -220,6 +230,7 @@ struct ran_ue_s {
         ogs_5gs_tai_t   nr_tai;
         ogs_nr_cgi_t    nr_cgi;
         uint8_t         nr_cgi_gnb_id_length;
+        amf_nr_ntn_tai_info_t nr_ntn_tai;
     } saved;
 
     /* NG Holding timer for removing this context */
@@ -407,6 +418,7 @@ struct amf_ue_s {
     ogs_5gs_tai_t   nr_tai;
     ogs_nr_cgi_t    nr_cgi;
     uint8_t         nr_cgi_gnb_id_length;
+    amf_nr_ntn_tai_info_t nr_ntn_tai;
     ogs_time_t      ue_location_timestamp;
     ogs_plmn_id_t   last_visited_plmn_id;
     ogs_nas_ue_usage_setting_t ue_usage_setting;
@@ -723,6 +735,21 @@ struct amf_ue_s {
         OCTET_STRING_t container;
         NGAP_Cause_PR group;
         long cause;
+
+        /*
+         * N2 handover with AMF relocation (TS 23.502 4.9.1.3.2).
+         * On the target AMF there is intentionally no local source ran_ue;
+         * retain the inbound CreateUEContext stream until target-RAN and
+         * SMF handover preparation have completed asynchronously.
+         */
+        bool inter_amf_source;
+        bool inter_amf_target;
+        bool source_plmn_id_presence;
+        ogs_plmn_id_t source_plmn_id;
+        ogs_pool_id_t create_ue_context_stream_id;
+        ogs_pool_id_t release_ue_context_stream_id;
+        char *n2_notify_uri;
+        char *target_ue_context_uri;
     } handover;
 
     /* SubscriptionId of Subscription to Data Change Notification to UDM */
@@ -816,6 +843,25 @@ typedef struct amf_sess_s {
     struct {
         ogs_sbi_client_t *client;
     } sm_context;
+
+    /*
+     * Inter-PLMN N2 handover SM-context relocation metadata.
+     *
+     * The source SM context is not the live target-AMF SM context while a
+     * V-SMF is being inserted/changed.  Keep it separately until the target
+     * AMF has selected and created the visited SM context.
+     */
+    struct {
+        bool pending;
+        char *source_sm_context_uri;
+        char *source_smf_id;
+        bool source_smf_plmn_id_presence;
+        ogs_plmn_id_t source_smf_plmn_id;
+        char *h_smf_id;
+        char *v_smf_id;
+        ogs_pkbuf_t *handover_required;
+        OpenAPI_ng_ran_target_id_t *target_id;
+    } inter_plmn_handover;
 
     bool pdu_session_release_complete_received;
     bool pdu_session_resource_release_response_received;

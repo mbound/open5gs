@@ -695,6 +695,35 @@ int ngap_send_handover_request(amf_ue_t *amf_ue)
     return rv;
 }
 
+int ngap_send_handover_request_to_target(amf_ue_t *amf_ue)
+{
+    int rv;
+    ran_ue_t *target_ue = NULL;
+    ogs_pkbuf_t *ngapbuf = NULL;
+
+    if (!amf_ue) {
+        ogs_error("UE(amf-ue) context has already been removed");
+        return OGS_NOTFOUND;
+    }
+
+    target_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (!target_ue) {
+        ogs_error("Target NG context has already been removed");
+        return OGS_NOTFOUND;
+    }
+
+    ngapbuf = ngap_build_handover_request(target_ue);
+    if (!ngapbuf) {
+        ogs_error("ngap_build_handover_request() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ngap_send_to_ran_ue(target_ue, ngapbuf);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
 int ngap_send_handover_preparation_failure(
         ran_ue_t *source_ue, NGAP_Cause_t *cause)
 {

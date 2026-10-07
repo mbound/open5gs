@@ -22,6 +22,7 @@
 #include "ngap-path.h"
 #include "nnrf-handler.h"
 #include "n5geir-build.h"
+#include "namf-build.h"
 
 int amf_sbi_open(void)
 {
@@ -159,6 +160,58 @@ int amf_ue_sbi_discover_and_send(
     return OGS_OK;
 }
 
+/*
+ * Handover preparation is an NGAP procedure, not a NAS registration
+ * procedure.  Keep its SBI failure handling out of the generic UE helper,
+ * which sends a GMM Reject when transaction creation or discovery fails.
+ */
+int amf_ue_sbi_discover_and_send_handover(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
+        amf_ue_t *amf_ue, int state, void *data)
+{
+    int rv;
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_assert(service_name);
+    ogs_assert(amf_ue);
+    ogs_assert(build);
+
+    /*
+     * A UE may already have used Namf_Communication against an old AMF
+     * (e.g. registration context transfer).  That per-UE cached service
+     * association must not override the target-TAI discovery for handover.
+     */
+    if (amf_ue->sbi.service_name_array[service_name].nf_instance_id) {
+        ogs_free(amf_ue->sbi.service_name_array[service_name].nf_instance_id);
+        amf_ue->sbi.service_name_array[service_name].nf_instance_id = NULL;
+#if ENABLE_VALIDITY_TIMEOUT
+        amf_ue->sbi.service_name_array[service_name].validity_timeout = 0;
+#endif
+    }
+
+    xact = ogs_sbi_xact_add(
+            amf_ue->id, &amf_ue->sbi, service_name, discovery_option,
+            (ogs_sbi_build_f)build, amf_ue, data);
+    if (!xact) {
+        ogs_error("[%s] Cannot create handover SBI transaction",
+                amf_ue->supi);
+        return OGS_ERROR;
+    }
+
+    xact->state = state;
+
+    rv = ogs_sbi_discover_and_send(xact);
+    if (rv != OGS_OK) {
+        ogs_error("[%s] Cannot send handover SBI request [error:%d]",
+                amf_ue->supi, rv);
+        ogs_sbi_xact_remove(xact);
+    }
+
+    return rv;
+}
+
 /* The UE FSM applies failure_action instead of the generic SBI reject. */
 int amf_ue_sbi_discover_and_send_eir(amf_ue_t *amf_ue)
 {
@@ -279,6 +332,74 @@ int amf_sess_sbi_discover_and_send(
 
     return OGS_OK;
 }
+int amf_sess_sbi_discover_and_send_handover(
+        OpenAPI_service_name_e service_name,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
+        ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data)
+{
+    int rv;
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_assert(service_name);
+    ogs_assert(ran_ue);
+    ogs_assert(sess);
+    ogs_assert(build);
+
+    sess->ran_ue_id = ran_ue->id;
+
+    xact = ogs_sbi_xact_add(
+            sess->id, &sess->sbi, service_name, discovery_option,
+            (ogs_sbi_build_f)build, sess, data);
+    if (!xact) {
+        ogs_error("[%d] Cannot create handover session SBI transaction",
+                sess->psi);
+        return OGS_ERROR;
+    }
+
+    {
+        amf_sbi_xact_ctx_t *ctx = ogs_calloc(1, sizeof(*ctx));
+        ogs_assert(ctx);
+
+        ctx->ran_ue_id = ran_ue->id;
+        ctx->target_ue_id = ran_ue->target_ue_id;
+
+        xact->user_data = ctx;
+        xact->user_data_free = amf_sbi_xact_ctx_free;
+    }
+
+    xact->state = state;
+
+    /*
+     * Target-AMF handover preparation is subordinate to the inbound
+     * CreateUEContext request.  Associate the SMF transaction with that
+     * server stream so lib/sbi cancels it if the source AMF abandons the
+     * request before handover preparation completes.
+     */
+    {
+        amf_ue_t *amf_ue = amf_ue_find_by_id(sess->amf_ue_id);
+        if (amf_ue && amf_ue->handover.inter_amf_target) {
+            ogs_pool_id_t stream_id =
+                (state == AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_CANCEL) ?
+                    amf_ue->handover.release_ue_context_stream_id :
+                    amf_ue->handover.create_ue_context_stream_id;
+
+            if (stream_id >= OGS_MIN_POOL_ID &&
+                stream_id <= OGS_MAX_POOL_ID)
+                xact->assoc_stream_id = stream_id;
+        }
+    }
+
+    rv = ogs_sbi_discover_and_send(xact);
+    if (rv != OGS_OK) {
+        ogs_error("[%d] Cannot send handover session SBI request [error:%d]",
+                sess->psi, rv);
+        ogs_sbi_xact_remove(xact);
+    }
+
+    return rv;
+}
+
 static int client_discover_cb(
         int status, ogs_sbi_response_t *response, void *data)
 {
@@ -477,6 +598,12 @@ static int client_discover_cb(
             ogs_sbi_discovery_option_add_target_plmn_list(
                     h_discovery_option, &amf_ue->home_plmn_id);
 
+            if (sess->inter_plmn_handover.pending &&
+                sess->inter_plmn_handover.h_smf_id)
+                ogs_sbi_discovery_option_set_target_nf_instance_id(
+                        h_discovery_option,
+                        sess->inter_plmn_handover.h_smf_id);
+
             ogs_assert(ogs_local_conf()->num_of_serving_plmn_id);
             for (i = 0; i < ogs_local_conf()->num_of_serving_plmn_id; i++) {
                 ogs_sbi_discovery_option_add_requester_plmn_list(
@@ -507,11 +634,27 @@ static int client_discover_cb(
     } else if (current_state == AMF_SMF_SELECTION_IN_HPLMN_IN_HOME_ROUTED) {
         ogs_info("Home-Routed Roaming(HPLMN)");
 
+        if (sess->inter_plmn_handover.pending &&
+            sess->inter_plmn_handover.h_smf_id &&
+            strcmp(sess->inter_plmn_handover.h_smf_id,
+                   nf_instance->id) != 0) {
+            ogs_error("[%s:%d] H-SMF anchor changed during inter-PLMN "
+                    "handover [%s != %s]",
+                    amf_ue->supi, sess->psi,
+                    sess->inter_plmn_handover.h_smf_id,
+                    nf_instance->id);
+            goto cleanup;
+        }
+
         OGS_SBI_SETUP_NF_INSTANCE(sess->sbi.home_nsmf_pdusession, nf_instance);
     } else {
         ogs_fatal("Invalid current_state = %d", current_state);
         ogs_assert_if_reached();
     }
+
+    if (next_state == AMF_CREATE_SM_CONTEXT_NO_STATE &&
+        sess->inter_plmn_handover.pending)
+        next_state = AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER;
 
     if (next_state == AMF_SMF_SELECTION_IN_HPLMN_IN_HOME_ROUTED) {
 
@@ -537,7 +680,8 @@ static int client_discover_cb(
 
         ogs_sbi_discovery_option_free(v_discovery_option);
 
-    } else if (next_state == AMF_CREATE_SM_CONTEXT_NO_STATE) {
+    } else if (next_state == AMF_CREATE_SM_CONTEXT_NO_STATE ||
+               next_state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER) {
 
         r = amf_sess_sbi_discover_and_send(
                 service_name, v_discovery_option,
@@ -565,6 +709,42 @@ cleanup:
     ogs_sbi_response_free(response);
 
     return OGS_ERROR;
+}
+
+int amf_sbi_start_inter_plmn_handover(
+        ran_ue_t *ran_ue, amf_sess_t *sess)
+{
+    int r;
+    amf_ue_t *amf_ue = NULL;
+    amf_nnssf_nsselection_param_t param;
+
+    ogs_assert(ran_ue);
+    ogs_assert(sess);
+    ogs_assert(sess->inter_plmn_handover.pending);
+
+    amf_ue = amf_ue_find_by_id(sess->amf_ue_id);
+    ogs_assert(amf_ue);
+
+    memset(&param, 0, sizeof(param));
+    param.slice_info_for_pdu_session.presence = true;
+    param.slice_info_for_pdu_session.snssai = &sess->s_nssai;
+    param.slice_info_for_pdu_session.roaming_indication =
+        OpenAPI_roaming_indication_HOME_ROUTED_ROAMING;
+    param.slice_info_for_pdu_session.home_snssai = &sess->s_nssai;
+    param.home_plmn_id = &amf_ue->home_plmn_id;
+    param.tai = &amf_ue->nr_tai;
+
+    /*
+     * Reuse the normal HR SMF selection pipeline. It first selects the
+     * visited SMF, then the H-SMF, but the latter is constrained by the
+     * transferred hsmfId so the home anchor cannot change.
+     */
+    r = amf_sess_sbi_discover_and_send(
+            OpenAPI_service_name_nnssf_nsselection, NULL,
+            amf_nnssf_nsselection_build_get,
+            ran_ue, sess,
+            AMF_SMF_SELECTION_IN_VPLMN_IN_HOME_ROUTED, &param);
+    return r;
 }
 
 int amf_sess_sbi_discover_by_nsi(
@@ -959,6 +1139,365 @@ static int client_notify_cb(
     ogs_sbi_message_free(&message);
     ogs_sbi_response_free(response);
     return OGS_OK;
+}
+
+static int client_inter_amf_ran_status_transfer_cb(
+        int status, ogs_sbi_response_t *response, void *data)
+{
+    int rv;
+    ogs_sbi_message_t message;
+
+    if (status != OGS_OK) {
+        ogs_log_message(
+                status == OGS_DONE ? OGS_LOG_DEBUG : OGS_LOG_WARN, 0,
+                "RAN status transfer relay failed [%d]", status);
+        if (response)
+            ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    ogs_assert(response);
+    memset(&message, 0, sizeof(message));
+
+    rv = ogs_sbi_parse_response(&message, response);
+    if (rv != OGS_OK) {
+        ogs_error("Cannot parse inter-AMF RAN status transfer response");
+        ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    if (message.res_status != OGS_SBI_HTTP_STATUS_OK) {
+        ogs_error("Inter-AMF RAN status transfer failed [HTTP:%d]",
+                message.res_status);
+        rv = OGS_ERROR;
+    } else {
+        rv = OGS_OK;
+    }
+
+    ogs_sbi_message_free(&message);
+    ogs_sbi_response_free(response);
+    return rv;
+}
+
+bool amf_sbi_send_inter_amf_ran_status_transfer(
+        amf_ue_t *amf_ue,
+        NGAP_RANStatusTransfer_TransparentContainer_t *transfer)
+{
+    bool rc = false;
+    int rv;
+    ogs_sbi_request_t *request = NULL;
+    ogs_sbi_client_t *client = NULL;
+    ogs_pkbuf_t *n2buf = NULL;
+    OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
+    char *fqdn = NULL;
+    uint16_t port = 0;
+    ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
+    NGAP_RANStatusTransfer_TransparentContainer_t copy;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_source);
+    ogs_assert(amf_ue->handover.target_ue_context_uri);
+    ogs_assert(transfer);
+
+    memset(&copy, 0, sizeof(copy));
+    rv = ogs_asn_copy_ie(
+            &asn_DEF_NGAP_RANStatusTransfer_TransparentContainer,
+            transfer, &copy);
+    if (rv != OGS_OK) {
+        ogs_error("[%s] Cannot copy RAN status transfer container",
+                amf_ue->supi);
+        return false;
+    }
+
+    n2buf = ogs_asn_encode(
+            &asn_DEF_NGAP_RANStatusTransfer_TransparentContainer, &copy);
+    if (!n2buf) {
+        ogs_error("[%s] Cannot encode RAN status transfer container",
+                amf_ue->supi);
+        return false;
+    }
+
+    if (ogs_sbi_getaddr_from_uri(
+            &scheme, &fqdn, &port, &addr, &addr6,
+            amf_ue->handover.target_ue_context_uri) == false ||
+        scheme == OpenAPI_uri_scheme_NULL) {
+        ogs_error("[%s] Invalid target UE context URI [%s]",
+                amf_ue->supi,
+                amf_ue->handover.target_ue_context_uri);
+        goto cleanup;
+    }
+
+    client = ogs_sbi_client_find(scheme, fqdn, port, addr, addr6);
+    if (!client)
+        client = ogs_sbi_client_add(scheme, fqdn, port, addr, addr6);
+    if (!client) {
+        ogs_error("[%s] Cannot create target AMF SBI client", amf_ue->supi);
+        goto cleanup;
+    }
+
+    request = amf_namf_comm_build_ran_status_transfer(amf_ue, n2buf);
+    n2buf = NULL; /* builder consumes the binary part */
+    if (!request) {
+        ogs_error("[%s] Cannot build inter-AMF RAN status transfer",
+                amf_ue->supi);
+        goto cleanup;
+    }
+
+    rc = ogs_sbi_send_request_to_client(
+            client, client_inter_amf_ran_status_transfer_cb, request, NULL);
+    if (rc != true)
+        ogs_error("[%s] Cannot send inter-AMF RAN status transfer",
+                amf_ue->supi);
+
+cleanup:
+    if (request)
+        ogs_sbi_request_free(request);
+    if (n2buf)
+        ogs_pkbuf_free(n2buf);
+    if (fqdn)
+        ogs_free(fqdn);
+    if (addr)
+        ogs_freeaddrinfo(addr);
+    if (addr6)
+        ogs_freeaddrinfo(addr6);
+    return rc;
+}
+
+static int client_inter_amf_handover_complete_cb(
+        int status, ogs_sbi_response_t *response, void *data)
+{
+    int rv;
+    ogs_sbi_message_t message;
+
+    if (status != OGS_OK) {
+        ogs_log_message(
+                status == OGS_DONE ? OGS_LOG_DEBUG : OGS_LOG_WARN, 0,
+                "HANDOVER_COMPLETED callback failed [%d]", status);
+        if (response)
+            ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    ogs_assert(response);
+
+    memset(&message, 0, sizeof(message));
+    rv = ogs_sbi_parse_response(&message, response);
+    if (rv != OGS_OK) {
+        ogs_error("Cannot parse HANDOVER_COMPLETED response");
+        ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    if (message.res_status != OGS_SBI_HTTP_STATUS_OK &&
+        message.res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT) {
+        ogs_error("HANDOVER_COMPLETED notification failed [HTTP:%d]",
+                message.res_status);
+        rv = OGS_ERROR;
+    } else {
+        rv = OGS_OK;
+    }
+
+    ogs_sbi_message_free(&message);
+    ogs_sbi_response_free(response);
+    return rv;
+}
+
+static int client_inter_amf_handover_cancel_cb(
+        int status, ogs_sbi_response_t *response, void *data)
+{
+    int rv;
+    ogs_pool_id_t amf_ue_id = OGS_POINTER_TO_UINT(data);
+    amf_ue_t *amf_ue = NULL;
+    ran_ue_t *source_ue = NULL;
+    ogs_sbi_message_t message;
+
+    if (status != OGS_OK) {
+        ogs_log_message(
+                status == OGS_DONE ? OGS_LOG_DEBUG : OGS_LOG_WARN, 0,
+                "ReleaseUEContext failed [%d]", status);
+        if (response)
+            ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    ogs_assert(response);
+    memset(&message, 0, sizeof(message));
+    rv = ogs_sbi_parse_response(&message, response);
+    if (rv != OGS_OK) {
+        ogs_error("Cannot parse ReleaseUEContext response");
+        ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    amf_ue = amf_ue_find_by_id(amf_ue_id);
+    if (!amf_ue) {
+        ogs_warn("Source AMF UE context removed before ReleaseUEContext "
+                "response");
+        ogs_sbi_message_free(&message);
+        ogs_sbi_response_free(response);
+        return OGS_NOTFOUND;
+    }
+
+    if (message.res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT) {
+        ogs_error("[%s] ReleaseUEContext failed [HTTP:%d]",
+                amf_ue->supi, message.res_status);
+        ogs_sbi_message_free(&message);
+        ogs_sbi_response_free(response);
+        return OGS_ERROR;
+    }
+
+    source_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (!source_ue) {
+        ogs_error("[%s] Source NG context removed before handover cancel ack",
+                amf_ue->supi);
+        ogs_sbi_message_free(&message);
+        ogs_sbi_response_free(response);
+        return OGS_NOTFOUND;
+    }
+
+    rv = ngap_send_handover_cancel_ack(source_ue);
+    if (rv != OGS_OK)
+        ogs_error("[%s] Cannot send HandoverCancelAcknowledge [error:%d]",
+                amf_ue->supi, rv);
+
+    amf_ue->handover.inter_amf_source = false;
+    if (amf_ue->handover.target_ue_context_uri) {
+        ogs_free(amf_ue->handover.target_ue_context_uri);
+        amf_ue->handover.target_ue_context_uri = NULL;
+    }
+    OGS_ASN_CLEAR_DATA(&amf_ue->handover.container);
+    AMF_UE_CLEAR_N2_TRANSFER(amf_ue, handover_command);
+
+    ogs_sbi_message_free(&message);
+    ogs_sbi_response_free(response);
+    return rv;
+}
+
+bool amf_sbi_send_inter_amf_handover_cancel(
+        amf_ue_t *amf_ue, NGAP_Cause_t *cause)
+{
+    bool rc = false;
+    ogs_sbi_request_t *request = NULL;
+    ogs_sbi_client_t *client = NULL;
+    OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
+    char *fqdn = NULL;
+    uint16_t port = 0;
+    ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_source);
+    ogs_assert(cause);
+
+    if (!amf_ue->handover.target_ue_context_uri) {
+        ogs_error("[%s] No target UE context URI for handover cancel",
+                amf_ue->supi);
+        return false;
+    }
+
+    if (ogs_sbi_getaddr_from_uri(
+            &scheme, &fqdn, &port, &addr, &addr6,
+            amf_ue->handover.target_ue_context_uri) == false ||
+        scheme == OpenAPI_uri_scheme_NULL) {
+        ogs_error("[%s] Invalid target UE context URI [%s]",
+                amf_ue->supi,
+                amf_ue->handover.target_ue_context_uri);
+        goto cleanup;
+    }
+
+    client = ogs_sbi_client_find(scheme, fqdn, port, addr, addr6);
+    if (!client)
+        client = ogs_sbi_client_add(scheme, fqdn, port, addr, addr6);
+    if (!client) {
+        ogs_error("[%s] Cannot create target AMF SBI client", amf_ue->supi);
+        goto cleanup;
+    }
+
+    request = amf_namf_comm_build_release_ue_context(amf_ue, cause);
+    if (!request) {
+        ogs_error("[%s] Cannot build ReleaseUEContext request", amf_ue->supi);
+        goto cleanup;
+    }
+
+    rc = ogs_sbi_send_request_to_client(
+            client, client_inter_amf_handover_cancel_cb, request,
+            OGS_UINT_TO_POINTER(amf_ue->id));
+    if (rc != true)
+        ogs_error("[%s] Cannot send ReleaseUEContext", amf_ue->supi);
+
+cleanup:
+    if (request)
+        ogs_sbi_request_free(request);
+    if (fqdn)
+        ogs_free(fqdn);
+    if (addr)
+        ogs_freeaddrinfo(addr);
+    if (addr6)
+        ogs_freeaddrinfo(addr6);
+    return rc;
+}
+
+bool amf_sbi_send_inter_amf_handover_complete(amf_ue_t *amf_ue)
+{
+    bool rc = false;
+    ogs_sbi_request_t *request = NULL;
+    ogs_sbi_client_t *client = NULL;
+    OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
+    char *fqdn = NULL;
+    uint16_t port = 0;
+    ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->handover.inter_amf_target);
+
+    if (!amf_ue->handover.n2_notify_uri) {
+        ogs_error("[%s] No n2NotifyUri for HANDOVER_COMPLETED",
+                amf_ue->supi ? amf_ue->supi : "Unknown");
+        return false;
+    }
+
+    if (ogs_sbi_getaddr_from_uri(
+            &scheme, &fqdn, &port, &addr, &addr6,
+            amf_ue->handover.n2_notify_uri) == false ||
+        scheme == OpenAPI_uri_scheme_NULL) {
+        ogs_error("[%s] Invalid n2NotifyUri [%s]",
+                amf_ue->supi ? amf_ue->supi : "Unknown",
+                amf_ue->handover.n2_notify_uri);
+        goto cleanup;
+    }
+
+    client = ogs_sbi_client_find(scheme, fqdn, port, addr, addr6);
+    if (!client)
+        client = ogs_sbi_client_add(scheme, fqdn, port, addr, addr6);
+    if (!client) {
+        ogs_error("[%s] Cannot create SBI client for n2NotifyUri",
+                amf_ue->supi ? amf_ue->supi : "Unknown");
+        goto cleanup;
+    }
+
+    request = amf_namf_callback_build_n2_info_notify(amf_ue, NULL);
+    if (!request) {
+        ogs_error("[%s] Cannot build HANDOVER_COMPLETED notification",
+                amf_ue->supi ? amf_ue->supi : "Unknown");
+        goto cleanup;
+    }
+
+    rc = ogs_sbi_send_request_to_client(
+            client, client_inter_amf_handover_complete_cb, request, NULL);
+    if (rc != true)
+        ogs_error("[%s] Cannot send HANDOVER_COMPLETED notification",
+                amf_ue->supi ? amf_ue->supi : "Unknown");
+
+cleanup:
+    if (request)
+        ogs_sbi_request_free(request);
+    if (fqdn)
+        ogs_free(fqdn);
+    if (addr)
+        ogs_freeaddrinfo(addr);
+    if (addr6)
+        ogs_freeaddrinfo(addr6);
+
+    return rc;
 }
 
 bool amf_sbi_send_n1_n2_failure_notify(

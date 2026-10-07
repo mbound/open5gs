@@ -20,13 +20,14 @@
 #include "nsmf-handler.h"
 #include "nas-path.h"
 #include "ngap-path.h"
+#include "namf-handler.h"
 #include "sbi-path.h"
 
 #include "gmm-build.h"
 
 int amf_nsmf_pdusession_handle_create_sm_context(
         amf_ue_t *amf_ue, ran_ue_t *ran_ue, amf_sess_t *sess,
-        ogs_sbi_message_t *recvmsg)
+        int state, ogs_sbi_message_t *recvmsg)
 {
     int rv, r;
 
@@ -148,6 +149,57 @@ int amf_nsmf_pdusession_handle_create_sm_context(
 
         ogs_sbi_header_free(&header);
 
+        if (state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER) {
+            OpenAPI_sm_context_created_data_t *CreatedData = NULL;
+            OpenAPI_ref_to_binary_data_t *n2SmInfo = NULL;
+            ogs_pkbuf_t *n2smbuf = NULL;
+
+            CreatedData = recvmsg->SmContextCreatedData;
+            if (!CreatedData ||
+                CreatedData->ho_state != OpenAPI_ho_state_PREPARING ||
+                CreatedData->n2_sm_info_type !=
+                    OpenAPI_n2_sm_info_type_PDU_RES_SETUP_REQ ||
+                !CreatedData->n2_sm_info ||
+                !CreatedData->n2_sm_info->content_id) {
+                ogs_error("[%s:%d] Invalid inter-PLMN handover "
+                        "SmContextCreatedData",
+                        amf_ue->supi, sess->psi);
+                amf_namf_comm_fail_create_ue_context(amf_ue, NULL);
+                return OGS_ERROR;
+            }
+
+            n2SmInfo = CreatedData->n2_sm_info;
+            n2smbuf = ogs_sbi_find_part_by_content_id(
+                    recvmsg, n2SmInfo->content_id);
+            if (!n2smbuf) {
+                ogs_error("[%s:%d] No PDU_RES_SETUP_REQ N2 content",
+                        amf_ue->supi, sess->psi);
+                amf_namf_comm_fail_create_ue_context(amf_ue, NULL);
+                return OGS_ERROR;
+            }
+
+            AMF_SESS_STORE_N2_TRANSFER(
+                    sess, handover_request, ogs_pkbuf_copy(n2smbuf));
+
+            /*
+             * The current transaction has already been removed by amf-sm
+             * before this handler is entered. Once every migrated session
+             * has returned PREPARING, the target AMF can issue the NGAP
+             * Handover Request.
+             */
+            if (AMF_SESSION_SYNC_DONE(
+                    amf_ue, AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER)) {
+                r = ngap_send_handover_request_to_target(amf_ue);
+                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    return r;
+
+                AMF_UE_CLEAR_N2_TRANSFER(amf_ue, handover_request);
+            }
+
+            return OGS_OK;
+        }
+
         if (sess->pdu_session_establishment_accept) {
             /*
              * [1-SERVER] /namf-comm/v1/ue-contexts/{supi}/n1-n2-messages
@@ -179,6 +231,14 @@ int amf_nsmf_pdusession_handle_create_sm_context(
         }
 
     } else {
+        if (state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER) {
+            ogs_error("[%s:%d] Target V-SMF handover preparation failed "
+                    "[HTTP:%d]",
+                    amf_ue->supi, sess->psi, recvmsg->res_status);
+            amf_namf_comm_fail_create_ue_context(amf_ue, NULL);
+            return OGS_ERROR;
+        }
+
         OpenAPI_sm_context_create_error_t *SmContextCreateError = NULL;
         OpenAPI_ref_to_binary_data_t *n1SmMsg = NULL;
         ogs_pkbuf_t *n1smbuf = NULL;
@@ -394,13 +454,17 @@ int amf_nsmf_pdusession_handle_update_sm_context(
                         AMF_UE_CLEAR_N2_TRANSFER(
                                 amf_ue, pdu_session_resource_setup_request);
                     }
-                } else if (state == AMF_UPDATE_SM_CONTEXT_HANDOVER_REQUIRED) {
+                } else if (state == AMF_UPDATE_SM_CONTEXT_HANDOVER_REQUIRED ||
+                           state == AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQUIRED) {
                     AMF_SESS_STORE_N2_TRANSFER(
                             sess, handover_request, ogs_pkbuf_copy(n2smbuf));
 
-                    if (AMF_SESSION_SYNC_DONE(amf_ue,
-                                AMF_UPDATE_SM_CONTEXT_HANDOVER_REQUIRED)) {
-                        r = ngap_send_handover_request(amf_ue);
+                    if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
+                        if (state ==
+                                AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQUIRED)
+                            r = ngap_send_handover_request_to_target(amf_ue);
+                        else
+                            r = ngap_send_handover_request(amf_ue);
                         ogs_expect(r == OGS_OK);
                         ogs_assert(r != OGS_ERROR);
 
@@ -553,7 +617,13 @@ int amf_nsmf_pdusession_handle_update_sm_context(
                         sess, handover_command, ogs_pkbuf_copy(n2smbuf));
 
                 if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
-                    r = ngap_send_handover_command(amf_ue);
+                    if (state ==
+                            AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_REQ_ACK) {
+                        r = amf_namf_comm_send_create_ue_context_response(
+                                amf_ue);
+                    } else {
+                        r = ngap_send_handover_command(amf_ue);
+                    }
                     ogs_expect(r == OGS_OK);
                     ogs_assert(r != OGS_ERROR);
 
@@ -803,6 +873,33 @@ int amf_nsmf_pdusession_handle_update_sm_context(
 
                 /* Not reached here */
                 ogs_assert_if_reached();
+
+            } else if (state ==
+                    AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_CANCEL) {
+
+                if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
+                    r = amf_namf_comm_complete_release_ue_context(amf_ue);
+                    ogs_expect(r == OGS_OK);
+                }
+
+            } else if (state ==
+                    AMF_UPDATE_SM_CONTEXT_INTER_AMF_HANDOVER_FAILURE) {
+
+                if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
+                    ran_ue_t *target_ue =
+                        ran_ue_find_by_id(amf_ue->ran_ue_id);
+
+                    if (target_ue) {
+                        r = ngap_send_ran_ue_context_release_command(
+                                target_ue,
+                                NGAP_Cause_PR_radioNetwork,
+                                NGAP_CauseRadioNetwork_ho_failure_in_target_5GC_ngran_node_or_target_system,
+                                NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+                        ogs_expect(r == OGS_OK);
+                    } else {
+                        amf_ue_remove(amf_ue);
+                    }
+                }
 
             } else if (state == AMF_UPDATE_SM_CONTEXT_HANDOVER_CANCEL) {
 

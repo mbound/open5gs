@@ -20,6 +20,50 @@
 #include "nsmf-build.h"
 #include "gsm-build.h"
 
+ogs_sbi_request_t *smf_nsmf_pdusession_build_retrieve_sm_context(
+        smf_sess_t *sess, void *data)
+{
+    ogs_sbi_message_t message;
+    ogs_sbi_request_t *request = NULL;
+    OpenAPI_sm_context_retrieve_data_t RetrieveData;
+
+    ogs_assert(sess);
+    ogs_assert(INTER_PLMN_HANDOVER_IN_VSMF(sess));
+    ogs_assert(sess->inter_plmn_handover.source_sm_context_uri);
+
+    memset(&message, 0, sizeof(message));
+    memset(&RetrieveData, 0, sizeof(RetrieveData));
+
+    message.h.method = (char *)OGS_SBI_HTTP_METHOD_POST;
+    message.h.uri = ogs_msprintf("%s/%s",
+            sess->inter_plmn_handover.source_sm_context_uri,
+            OGS_SBI_RESOURCE_NAME_RETRIEVE);
+    if (!message.h.uri)
+        return NULL;
+
+    RetrieveData.sm_context_type = OpenAPI_sm_context_type_SM_CONTEXT;
+    RetrieveData.serving_network =
+        ogs_sbi_build_plmn_id(&sess->serving_plmn_id);
+    if (!RetrieveData.serving_network) {
+        ogs_error("[%d] Cannot build servingNetwork for RetrieveSMContext",
+                sess->psi);
+        goto cleanup;
+    }
+
+    message.SmContextRetrieveData = &RetrieveData;
+    request = ogs_sbi_build_request(&message);
+    if (!request)
+        ogs_error("[%d] Cannot build RetrieveSMContext request", sess->psi);
+
+cleanup:
+    if (message.h.uri)
+        ogs_free(message.h.uri);
+    if (RetrieveData.serving_network)
+        ogs_sbi_free_plmn_id(RetrieveData.serving_network);
+
+    return request;
+}
+
 ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
         smf_sess_t *sess, void *data)
 {
@@ -132,6 +176,18 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
             OpenAPI_request_type_EXISTING_EMERGENCY_PDU_SESSION)
         PduSessionCreateData.request_type = sess->request_type;
 
+    if (INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+        /*
+         * TS 29.502 N2 handover preparation with V-SMF insertion/change:
+         * this is an existing PDU session and the H-SMF must preserve the
+         * current DL path until handover execution.
+         */
+        PduSessionCreateData.request_type =
+            OpenAPI_request_type_EXISTING_PDU_SESSION;
+        PduSessionCreateData.is_ho_preparation_indication = true;
+        PduSessionCreateData.ho_preparation_indication = true;
+    }
+
     header.service.name =
         OpenAPI_service_name_ToString(OpenAPI_service_name_nsmf_pdusession);
     header.api.version = (char *)OGS_SBI_API_V1;
@@ -209,8 +265,9 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
         goto end;
     }
 
-    ogs_assert(sess->n1SmBufFromUe);
-    rv = ogs_nas_5gsm_decode(&nas_message, sess->n1SmBufFromUe);
+    if (!INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+        ogs_assert(sess->n1SmBufFromUe);
+        rv = ogs_nas_5gsm_decode(&nas_message, sess->n1SmBufFromUe);
 
     if (rv == OGS_OK) {
         n1SmBufFromUe = gsmue_encode_n1_sm_info(&nas_message);
@@ -278,6 +335,8 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
     } else {
         ogs_error("ogs_nas_5gsm_decode() failed [%d]", rv);
         ogs_log_hexdump(OGS_LOG_ERROR, sess->n1SmBufFromUe->data, sess->n1SmBufFromUe->len);
+    }
+
     }
 
     message.PduSessionCreateData = &PduSessionCreateData;
@@ -373,6 +432,18 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_hsmf_update_data(
     HsmfUpdateData.request_indication = sess->nsmf_param.request_indication;
     ogs_assert(HsmfUpdateData.request_indication);
 
+    /*
+     * TS 29.502: hoPreparationIndication=false is used for handover
+     * execution/cancel/failure, and shall not be sent as false outside
+     * those procedures. PDU_SES_MOB here is the execution-phase HR
+     * mobility commit after target-RAN handover completion.
+     */
+    if (HsmfUpdateData.request_indication ==
+            OpenAPI_request_indication_PDU_SES_MOB) {
+        HsmfUpdateData.is_ho_preparation_indication = true;
+        HsmfUpdateData.ho_preparation_indication = false;
+    }
+
     HsmfUpdateData.cause = sess->nsmf_param.cause;
 
     HsmfUpdateData.up_cnx_state = sess->nsmf_param.up_cnx_state;
@@ -397,19 +468,41 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_hsmf_update_data(
         }
     }
 
-    if (sess->nsmf_param.dl_ip.ipv4)
-        vcnTunnelInfo.ipv4_addr = ogs_ipv4_to_string(
-                sess->nsmf_param.dl_ip.addr);
+    if (sess->nsmf_param.request_indication ==
+            OpenAPI_request_indication_PDU_SES_MOB &&
+        sess->nsmf_param.ho_state != OpenAPI_ho_state_CANCELLED) {
+        /*
+         * Inter-PLMN handover execution: advertise the target V-UPF N9
+         * endpoint selected during preparation.  A relocation-cancel uses
+         * the same PDU_SES_MOB update with hoPreparationIndication=false,
+         * but deliberately omits V-CN tunnel information.
+         */
+        if (sess->local_dl_addr)
+            vcnTunnelInfo.ipv4_addr =
+                ogs_ipstrdup(sess->local_dl_addr);
+        if (sess->local_dl_addr6)
+            vcnTunnelInfo.ipv6_addr =
+                ogs_ipstrdup(sess->local_dl_addr6);
+        if (sess->local_dl_teid)
+            vcnTunnelInfo.gtp_teid =
+                ogs_uint32_to_0string(sess->local_dl_teid);
+    } else {
+        if (sess->nsmf_param.dl_ip.ipv4)
+            vcnTunnelInfo.ipv4_addr = ogs_ipv4_to_string(
+                    sess->nsmf_param.dl_ip.addr);
 
-    if (sess->nsmf_param.dl_ip.ipv6)
-        vcnTunnelInfo.ipv6_addr = ogs_ipv6addr_to_string(
-                sess->nsmf_param.dl_ip.addr6);
+        if (sess->nsmf_param.dl_ip.ipv6)
+            vcnTunnelInfo.ipv6_addr = ogs_ipv6addr_to_string(
+                    sess->nsmf_param.dl_ip.addr6);
 
-    if (vcnTunnelInfo.ipv4_addr || vcnTunnelInfo.ipv6_addr) {
-        vcnTunnelInfo.gtp_teid = ogs_uint32_to_0string(
-                sess->nsmf_param.dl_teid);
-        HsmfUpdateData.vcn_tunnel_info = &vcnTunnelInfo;
+        if (vcnTunnelInfo.ipv4_addr || vcnTunnelInfo.ipv6_addr)
+            vcnTunnelInfo.gtp_teid = ogs_uint32_to_0string(
+                    sess->nsmf_param.dl_teid);
     }
+
+    if ((vcnTunnelInfo.ipv4_addr || vcnTunnelInfo.ipv6_addr) &&
+        vcnTunnelInfo.gtp_teid)
+        HsmfUpdateData.vcn_tunnel_info = &vcnTunnelInfo;
 
     HsmfUpdateData.an_type = sess->nsmf_param.an_type;
     HsmfUpdateData.rat_type = sess->nsmf_param.rat_type;

@@ -44,6 +44,8 @@ example_conf = '''
     srsenb.yaml
     non3gpp.yaml
     transfer.yaml
+    inter-amf-n2.yaml
+    inter-plmn-hr-n2.yaml
     transfer-error-case.yaml
 '''.split()
 

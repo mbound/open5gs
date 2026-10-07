@@ -30,10 +30,22 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_callback_handle_sm_context_status(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
+int amf_namf_callback_handle_n2_info_notify(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_callback_handle_dereg_notify(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_callback_handle_sdm_data_change_notify(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
+int amf_namf_comm_handle_create_ue_context_request(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
+int amf_namf_comm_handle_release_ue_context_request(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
+int amf_namf_comm_complete_release_ue_context(amf_ue_t *amf_ue);
+int amf_namf_comm_fail_create_ue_context(
+        amf_ue_t *amf_ue, NGAP_Cause_t *cause);
+int amf_namf_comm_handle_create_ue_context_response(
+        ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue);
+int amf_namf_comm_send_create_ue_context_response(amf_ue_t *amf_ue);
 int amf_namf_comm_handle_ue_context_transfer_request(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_comm_handle_ue_context_transfer_response(
