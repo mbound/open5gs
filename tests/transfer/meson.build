@@ -15,6 +15,20 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+
+testapp_inter_amf_n2_sources = files('''
+    abts-inter-amf-n2-main.c
+    inter-amf-n2-handover-test.c
+'''.split())
+
+testapp_inter_amf_n2_exe = executable('inter-amf-n2',
+    sources : testapp_inter_amf_n2_sources,
+    c_args : testunit_core_cc_flags,
+    dependencies : libtest5gc_dep)
+
+test('inter-amf-n2', testapp_inter_amf_n2_exe,
+    is_parallel : false, suite: '5gc')
+
 testapp_transfer_sources = files('''
     abts-main.c
     ue-context-transfer-test.c
