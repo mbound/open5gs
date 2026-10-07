@@ -600,6 +600,18 @@ bool gmm_registration_request_from_old_amf(amf_ue_t *amf_ue,
         return false;
     }
 
+    /*
+     * TS 23.502 4.9.1.3.3 step 12: after an inter-AMF N2 handover the
+     * target AMF already holds the UE context (CreateUEContext), so the
+     * Mobility Registration Update skips the context transfer from the
+     * old AMF (steps 4, 5 and 10 of 4.2.2.2.2). A SUPI plus a security
+     * context that verified this message means the context is here.
+     */
+    if (AMF_UE_HAVE_SUPI(amf_ue) && SECURITY_CONTEXT_IS_VALID(amf_ue) &&
+        amf_ue->selected_int_algorithm != 0) {
+        return false;
+    }
+
     /* Robustness: many devices (and fuzzers) send a "placeholder" 5G-GUTI
      * (AMF-ID zero + M-TMSI zero). Treat it as non-actionable for context
      * transfer regardless of PLMN digits, and fall back to Identity Request /

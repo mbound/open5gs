@@ -1073,6 +1073,21 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             nas_message.gmm.h.message_type ==
                 OGS_NAS_5GS_REGISTRATION_REQUEST) {
             amf_ue_t *registering_ue = amf_ue_find_by_message(&nas_message);
+            ogs_nas_security_header_type_t sh;
+
+            /*
+             * An identity this AMF does not know, in a message that passed
+             * the integrity check of the associated context, is that same
+             * UE: e.g. the Mobility Registration Update after an inter-AMF
+             * N2 handover, which carries the 5G-GUTI of the source AMF on
+             * the NG connection the handover created (TS 23.502 4.9.1.3.3
+             * step 12, TS 24.501 5.5.1.3.2). Only a verified MAC counts.
+             */
+            sh.type = e->nas.type;
+            if (!registering_ue && sh.integrity_protected &&
+                amf_ue->selected_int_algorithm != 0 &&
+                SECURITY_CONTEXT_IS_VALID(amf_ue))
+                registering_ue = amf_ue;
 
             if (registering_ue != amf_ue &&
                 (OGS_FSM_CHECK(&amf_ue->sm, gmm_state_registered) ||
@@ -1101,6 +1116,11 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                 ogs_warn("    RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld]",
                         (long long)ran_ue->ran_ue_ngap_id,
                         (long long)ran_ue->amf_ue_ngap_id);
+                ogs_warn("    NAS security: header[%d] NIA[%d] available[%d] "
+                        "mac_failed[%d] ksi[%d]",
+                        sh.type, amf_ue->selected_int_algorithm,
+                        amf_ue->security_context_available,
+                        amf_ue->mac_failed, amf_ue->nas.ue.ksi);
 
                 /* Same teardown as a RAN-initiated release request */
                 CLEAR_AMF_UE_ALL_TIMERS(amf_ue);
