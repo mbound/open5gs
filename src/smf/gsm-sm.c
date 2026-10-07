@@ -1230,6 +1230,12 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     smf_nsmf_handle_update_sm_context(
                             sess, stream, sbi_message);
                     break;
+                CASE(OGS_SBI_RESOURCE_NAME_RETRIEVE)
+                    if (smf_nsmf_handle_retrieve_sm_context(
+                            sess, stream, sbi_message) == false) {
+                        ogs_error("smf_nsmf_handle_retrieve_sm_context() failed");
+                    }
+                    break;
                 CASE(OGS_SBI_RESOURCE_NAME_RELEASE)
     /*
      * Network-requested PDU Session Release
