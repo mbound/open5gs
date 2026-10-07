@@ -544,6 +544,33 @@ bool smf_nsmf_handle_create_sm_context(
         ogs_assert(sess->inter_plmn_handover.source_sm_context_uri);
         ogs_assert(sess->inter_plmn_handover.source_smf_id);
 
+        /*
+         * ogs_sbi_discover_and_send() requires a client for an explicit
+         * request URI (lib/sbi/path.c asserts otherwise). The smContextRef
+         * authority (H-SMF FQDN) generally differs from hSmfUri's client,
+         * so make sure one exists for it.
+         */
+        rc = ogs_sbi_getaddr_from_uri(&scheme, &fqdn, &fqdn_port,
+                &addr, &addr6,
+                sess->inter_plmn_handover.source_sm_context_uri);
+        if (rc == false || scheme == OpenAPI_uri_scheme_NULL) {
+            ogs_error("[%s:%d] Invalid smContextRef [%s]",
+                    smf_ue->supi, sess->psi,
+                    sess->inter_plmn_handover.source_sm_context_uri);
+            return false;
+        }
+        client = ogs_sbi_client_find(scheme, fqdn, fqdn_port, addr, addr6);
+        if (!client)
+            client = ogs_sbi_client_add(scheme, fqdn, fqdn_port, addr, addr6);
+        ogs_free(fqdn);
+        ogs_freeaddrinfo(addr);
+        ogs_freeaddrinfo(addr6);
+        if (!client) {
+            ogs_error("[%s:%d] ogs_sbi_client_add() failed",
+                    smf_ue->supi, sess->psi);
+            return false;
+        }
+
         if (!ogs_sbi_parse_plmn_id_nid(
                 &sess->inter_plmn_handover.source_smf_plmn_id,
                 SmContextCreateData->sm_context_smf_plmn_id)) {
