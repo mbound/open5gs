@@ -4892,18 +4892,6 @@ void ngap_handle_uplink_ran_status_transfer(
         return;
     }
 
-    target_ue = ran_ue_find_by_id(source_ue->target_ue_id);
-    if (!target_ue) {
-        ogs_error("Cannot find Source-UE Context [%lld]",
-                (long long)amf_ue_ngap_id);
-        r = ngap_send_error_indication(
-                gnb, &source_ue->ran_ue_ngap_id, &source_ue->amf_ue_ngap_id,
-                NGAP_Cause_PR_radioNetwork,
-                NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return;
-    }
     amf_ue = amf_ue_find_by_id(source_ue->amf_ue_id);
     if (!amf_ue) {
         ogs_error("Cannot find AMF-UE Context [%lld]",
@@ -4917,13 +4905,6 @@ void ngap_handle_uplink_ran_status_transfer(
         return;
     }
 
-    ogs_debug("    Source : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
-        (long long)source_ue->ran_ue_ngap_id,
-        (long long)source_ue->amf_ue_ngap_id);
-    ogs_debug("    Target : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
-        (long long)target_ue->ran_ue_ngap_id,
-        (long long)target_ue->amf_ue_ngap_id);
-
     if (!RANStatusTransfer_TransparentContainer) {
         ogs_error("No RANStatusTransfer_TransparentContainer");
         r = ngap_send_error_indication(
@@ -4933,6 +4914,47 @@ void ngap_handle_uplink_ran_status_transfer(
         ogs_assert(r != OGS_ERROR);
         return;
     }
+
+    /*
+     * TS 23.502 4.9.1.3.3: with AMF relocation, the source AMF relays
+     * the RAN Status Transfer container to the target AMF using
+     * Namf_Communication_N1N2MessageTransfer. The target AMF then sends
+     * DownlinkRANStatusTransfer to its locally associated target gNB.
+     */
+    if (amf_ue->handover.inter_amf_source) {
+        if (amf_sbi_send_inter_amf_ran_status_transfer(
+                    amf_ue, RANStatusTransfer_TransparentContainer) != true) {
+            ogs_error("[%s] Cannot relay RAN status transfer to target AMF",
+                    amf_ue->supi);
+            r = ngap_send_error_indication(
+                    gnb, &source_ue->ran_ue_ngap_id,
+                    &source_ue->amf_ue_ngap_id,
+                    NGAP_Cause_PR_transport,
+                    NGAP_CauseTransport_transport_resource_unavailable);
+            ogs_expect(r == OGS_OK);
+        }
+        return;
+    }
+
+    target_ue = ran_ue_find_by_id(source_ue->target_ue_id);
+    if (!target_ue) {
+        ogs_error("Cannot find Target-UE Context [%lld]",
+                (long long)amf_ue_ngap_id);
+        r = ngap_send_error_indication(
+                gnb, &source_ue->ran_ue_ngap_id, &source_ue->amf_ue_ngap_id,
+                NGAP_Cause_PR_radioNetwork,
+                NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
+    ogs_debug("    Source : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
+        (long long)source_ue->ran_ue_ngap_id,
+        (long long)source_ue->amf_ue_ngap_id);
+    ogs_debug("    Target : RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] ",
+        (long long)target_ue->ran_ue_ngap_id,
+        (long long)target_ue->amf_ue_ngap_id);
 
     r = ngap_send_downlink_ran_status_transfer(
             target_ue, RANStatusTransfer_TransparentContainer);
