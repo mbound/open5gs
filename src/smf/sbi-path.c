@@ -468,7 +468,7 @@ void smf_sbi_send_inter_plmn_handover_sm_context_created(
     ogs_assert(response);
     ogs_assert(true == ogs_sbi_server_send_response(stream, response));
 
-    ogs_free(n2smbuf);
+    ogs_pkbuf_free(n2smbuf);
     if (sNssai.sd)
         ogs_free(sNssai.sd);
     ogs_free(sendmsg.http.location);
