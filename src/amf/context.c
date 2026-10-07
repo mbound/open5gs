@@ -2653,6 +2653,9 @@ void amf_sess_remove(amf_sess_t *sess)
         ogs_free(sess->inter_plmn_handover.v_smf_id);
     if (sess->inter_plmn_handover.handover_required)
         ogs_pkbuf_free(sess->inter_plmn_handover.handover_required);
+    if (sess->inter_plmn_handover.target_id)
+        OpenAPI_ng_ran_target_id_free(
+                sess->inter_plmn_handover.target_id);
 
     if (sess->payload_container)
         ogs_pkbuf_free(sess->payload_container);
