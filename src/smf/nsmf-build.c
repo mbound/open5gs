@@ -20,6 +20,50 @@
 #include "nsmf-build.h"
 #include "gsm-build.h"
 
+ogs_sbi_request_t *smf_nsmf_pdusession_build_retrieve_sm_context(
+        smf_sess_t *sess, void *data)
+{
+    ogs_sbi_message_t message;
+    ogs_sbi_request_t *request = NULL;
+    OpenAPI_sm_context_retrieve_data_t RetrieveData;
+
+    ogs_assert(sess);
+    ogs_assert(INTER_PLMN_HANDOVER_IN_VSMF(sess));
+    ogs_assert(sess->inter_plmn_handover.source_sm_context_uri);
+
+    memset(&message, 0, sizeof(message));
+    memset(&RetrieveData, 0, sizeof(RetrieveData));
+
+    message.h.method = (char *)OGS_SBI_HTTP_METHOD_POST;
+    message.h.uri = ogs_msprintf("%s/%s",
+            sess->inter_plmn_handover.source_sm_context_uri,
+            OGS_SBI_RESOURCE_NAME_RETRIEVE);
+    if (!message.h.uri)
+        return NULL;
+
+    RetrieveData.sm_context_type = OpenAPI_sm_context_type_SM_CONTEXT;
+    RetrieveData.serving_network =
+        ogs_sbi_build_plmn_id(&sess->serving_plmn_id);
+    if (!RetrieveData.serving_network) {
+        ogs_error("[%d] Cannot build servingNetwork for RetrieveSMContext",
+                sess->psi);
+        goto cleanup;
+    }
+
+    message.SmContextRetrieveData = &RetrieveData;
+    request = ogs_sbi_build_request(&message);
+    if (!request)
+        ogs_error("[%d] Cannot build RetrieveSMContext request", sess->psi);
+
+cleanup:
+    if (message.h.uri)
+        ogs_free(message.h.uri);
+    if (RetrieveData.serving_network)
+        ogs_sbi_free_plmn_id(RetrieveData.serving_network);
+
+    return request;
+}
+
 ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
         smf_sess_t *sess, void *data)
 {
