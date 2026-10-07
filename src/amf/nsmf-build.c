@@ -109,6 +109,7 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
     OpenAPI_snssai_t sNssai;
     OpenAPI_snssai_t hplmnSnssai;
     OpenAPI_ref_to_binary_data_t n1SmMsg;
+    OpenAPI_ref_to_binary_data_t n2SmInfo;
     OpenAPI_user_location_t ueLocation;
     ogs_sbi_nf_instance_t *pcf_nf_instance = NULL;
 
@@ -128,6 +129,8 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
     memset(&SmContextCreateData, 0, sizeof(SmContextCreateData));
     memset(&sNssai, 0, sizeof(sNssai));
     memset(&hplmnSnssai, 0, sizeof(hplmnSnssai));
+    memset(&n1SmMsg, 0, sizeof(n1SmMsg));
+    memset(&n2SmInfo, 0, sizeof(n2SmInfo));
     memset(&header, 0, sizeof(header));
     memset(&ueLocation, 0, sizeof(ueLocation));
 
@@ -220,8 +223,10 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
             OpenAPI_request_type_EXISTING_EMERGENCY_PDU_SESSION)
         SmContextCreateData.request_type = sess->request_type;
 
-    n1SmMsg.content_id = (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
-    SmContextCreateData.n1_sm_msg = &n1SmMsg;
+    if (!sess->inter_plmn_handover.pending) {
+        n1SmMsg.content_id = (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
+        SmContextCreateData.n1_sm_msg = &n1SmMsg;
+    }
 
     SmContextCreateData.an_type = amf_ue->nas.access_type;
     SmContextCreateData.rat_type = amf_ue_rat_type(amf_ue);
@@ -291,6 +296,55 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
         }
     }
 
+    if (sess->inter_plmn_handover.pending) {
+        ogs_assert(sess->inter_plmn_handover.source_sm_context_uri);
+        ogs_assert(sess->inter_plmn_handover.source_smf_id);
+        ogs_assert(sess->inter_plmn_handover.source_smf_plmn_id_presence);
+        ogs_assert(sess->inter_plmn_handover.handover_required);
+        ogs_assert(sess->inter_plmn_handover.target_id);
+
+        /*
+         * TS 29.502 V-SMF insertion/change during N2 handover.
+         * The new visited SM context is created with a reference to the
+         * source SM context while the retained H-SMF remains the HR anchor.
+         */
+        SmContextCreateData.sm_context_ref =
+            sess->inter_plmn_handover.source_sm_context_uri;
+        SmContextCreateData.sm_context_smf_id =
+            sess->inter_plmn_handover.source_smf_id;
+        SmContextCreateData.sm_context_smf_plmn_id =
+            ogs_sbi_build_plmn_id_nid(
+                    &sess->inter_plmn_handover.source_smf_plmn_id);
+        if (!SmContextCreateData.sm_context_smf_plmn_id) {
+            ogs_error("[%s:%d] Cannot build source SMF PLMN",
+                    amf_ue->supi, sess->psi);
+            goto end;
+        }
+
+        SmContextCreateData.ho_state = OpenAPI_ho_state_PREPARING;
+        SmContextCreateData.target_id =
+            OpenAPI_ng_ran_target_id_copy(
+                    NULL, sess->inter_plmn_handover.target_id);
+        if (!SmContextCreateData.target_id) {
+            ogs_error("[%s:%d] Cannot copy handover TargetID",
+                    amf_ue->supi, sess->psi);
+            goto end;
+        }
+
+        n2SmInfo.content_id = (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
+        SmContextCreateData.n2_sm_info = &n2SmInfo;
+        SmContextCreateData.n2_sm_info_type =
+            OpenAPI_n2_sm_info_type_HANDOVER_REQUIRED;
+
+        message.part[message.num_of_part].pkbuf =
+            sess->inter_plmn_handover.handover_required;
+        message.part[message.num_of_part].content_id =
+            (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
+        message.part[message.num_of_part].content_type =
+            (char *)OGS_SBI_CONTENT_NGAP_TYPE;
+        message.num_of_part++;
+    }
+
     /*
      * We're experiencing an issue after changing SearchResult.validityTime
      * from 3600 seconds to 30 seconds. (#3210)
@@ -313,13 +367,15 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
 
     message.SmContextCreateData = &SmContextCreateData;
 
-    message.part[message.num_of_part].pkbuf = sess->payload_container;
-    if (message.part[message.num_of_part].pkbuf) {
-        message.part[message.num_of_part].content_id =
-            (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
-        message.part[message.num_of_part].content_type =
-            (char *)OGS_SBI_CONTENT_5GNAS_TYPE;
-        message.num_of_part++;
+    if (!sess->inter_plmn_handover.pending) {
+        message.part[message.num_of_part].pkbuf = sess->payload_container;
+        if (message.part[message.num_of_part].pkbuf) {
+            message.part[message.num_of_part].content_id =
+                (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
+            message.part[message.num_of_part].content_type =
+                (char *)OGS_SBI_CONTENT_5GNAS_TYPE;
+            message.num_of_part++;
+        }
     }
 
     message.http.accept = (char *)(OGS_SBI_CONTENT_JSON_TYPE ","
@@ -363,6 +419,12 @@ end:
 
     if (SmContextCreateData.h_smf_uri)
         ogs_free(SmContextCreateData.h_smf_uri);
+    if (SmContextCreateData.sm_context_smf_plmn_id)
+        ogs_sbi_free_plmn_id_nid(
+                SmContextCreateData.sm_context_smf_plmn_id);
+    if (SmContextCreateData.target_id)
+        OpenAPI_ng_ran_target_id_free(
+                SmContextCreateData.target_id);
 
     if (message.http.custom.nrf_uri)
         ogs_free(message.http.custom.nrf_uri);
