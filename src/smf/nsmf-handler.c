@@ -2771,6 +2771,12 @@ bool smf_nsmf_handle_update_data_in_hsmf(
 
     sess->nsmf_param.request_indication = HsmfUpdateData->request_indication;
 
+    if (HsmfUpdateData->is_ho_preparation_indication) {
+        sess->nsmf_param.ho_preparation_indication_presence = true;
+        sess->nsmf_param.ho_preparation_indication =
+            HsmfUpdateData->ho_preparation_indication ? true : false;
+    }
+
     sess->nsmf_param.up_cnx_state = HsmfUpdateData->up_cnx_state;
 
     vcnTunnelInfo = HsmfUpdateData->vcn_tunnel_info;
