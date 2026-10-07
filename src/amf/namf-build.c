@@ -187,8 +187,13 @@ OpenAPI_list_t *amf_namf_comm_encode_ue_mm_context_list(amf_ue_t *amf_ue)
 
     MmContext->access_type = (OpenAPI_access_type_e)amf_ue->nas.access_type;
 
-    if ((OpenAPI_ciphering_algorithm_e)amf_ue->selected_enc_algorithm &&
-        (OpenAPI_integrity_algorithm_e)amf_ue->selected_int_algorithm) {
+    /*
+     * TS 29.518 NasSecurityMode: both algorithms are mandatory and NEA0 is
+     * a valid selection, so encode whenever a security context exists.
+     * The OpenAPI enums start with NULL = 0 (NEA0/NIA0 = 1), the AMF keeps
+     * the 3GPP algorithm number (NEA0/NIA0 = 0).
+     */
+    if (amf_ue->security_context_available) {
 
         OpenAPI_nas_security_mode_t *NasSecurityMode;
 
@@ -196,9 +201,11 @@ OpenAPI_list_t *amf_namf_comm_encode_ue_mm_context_list(amf_ue_t *amf_ue)
         ogs_assert(NasSecurityMode);
 
         NasSecurityMode->ciphering_algorithm =
-                (OpenAPI_ciphering_algorithm_e)amf_ue->selected_enc_algorithm;
+                (OpenAPI_ciphering_algorithm_e)
+                    (amf_ue->selected_enc_algorithm + 1);
         NasSecurityMode->integrity_algorithm =
-                (OpenAPI_integrity_algorithm_e)amf_ue->selected_int_algorithm;
+                (OpenAPI_integrity_algorithm_e)
+                    (amf_ue->selected_int_algorithm + 1);
 
         MmContext->nas_security_mode = NasSecurityMode;
     }

@@ -2649,11 +2649,16 @@ static void amf_namf_comm_decode_ue_mm_context_list(
         if (MmContext->access_type != OpenAPI_access_type_NULL)
             amf_ue->nas.access_type = (int)MmContext->access_type;
 
-        if (MmContext->nas_security_mode) {
-            amf_ue->selected_enc_algorithm =
-                (uint8_t)MmContext->nas_security_mode->ciphering_algorithm;
-            amf_ue->selected_int_algorithm =
-                (uint8_t)MmContext->nas_security_mode->integrity_algorithm;
+        /* OpenAPI enum NEA0/NIA0 = 1 (NULL = 0); AMF keeps 3GPP numbers */
+        if (MmContext->nas_security_mode &&
+            MmContext->nas_security_mode->ciphering_algorithm !=
+                OpenAPI_ciphering_algorithm_NULL &&
+            MmContext->nas_security_mode->integrity_algorithm !=
+                OpenAPI_integrity_algorithm_NULL) {
+            amf_ue->selected_enc_algorithm = (uint8_t)
+                (MmContext->nas_security_mode->ciphering_algorithm - 1);
+            amf_ue->selected_int_algorithm = (uint8_t)
+                (MmContext->nas_security_mode->integrity_algorithm - 1);
         }
 
         if (MmContext->is_nas_downlink_count)
