@@ -3904,10 +3904,20 @@ void ngap_handle_handover_required(
         discovery_option = ogs_sbi_discovery_option_new();
         ogs_assert(discovery_option);
         ogs_sbi_discovery_option_set_tai(discovery_option, &target_tai);
-        ogs_sbi_discovery_option_add_target_plmn_list(
-                discovery_option, &target_tai.plmn_id);
-        ogs_sbi_discovery_option_add_requester_plmn_list(
-                discovery_option, &amf_ue->nr_tai.plmn_id);
+        /*
+         * TS 29.510 Table 6.2.3.2.3.1-1: target-plmn-list/requester-plmn-
+         * list are included when NF services in a different PLMN are to be
+         * discovered. Add them only for an inter-PLMN target,
+         * as for AUSF/UDM discovery in amf_ue_sbi_discover_and_send();
+         * otherwise an NRF without 'serving' (AMF profiles carry no
+         * plmnList) rejects the same-PLMN AMF and forwards to a home NRF.
+         */
+        if (ogs_sbi_plmn_id_in_vplmn(&target_tai.plmn_id) == true) {
+            ogs_sbi_discovery_option_add_target_plmn_list(
+                    discovery_option, &target_tai.plmn_id);
+            ogs_sbi_discovery_option_add_requester_plmn_list(
+                    discovery_option, &amf_ue->nr_tai.plmn_id);
+        }
 
         /*
          * Advance the NH chain before transferring the security context.
