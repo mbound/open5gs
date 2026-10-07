@@ -231,7 +231,8 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
     SmContextCreateData.an_type = amf_ue->nas.access_type;
     SmContextCreateData.rat_type = amf_ue_rat_type(amf_ue);
 
-    ueLocation.nr_location = amf_nsmf_build_nr_location_with_ntn(\n            &amf_ue->nr_tai, &amf_ue->nr_cgi, amf_ue);
+    ueLocation.nr_location = amf_nsmf_build_nr_location_with_ntn(
+            &amf_ue->nr_tai, &amf_ue->nr_cgi, amf_ue);
     if (!ueLocation.nr_location) {
         ogs_error("No ueLocation.nr_location");
         goto end;
@@ -530,7 +531,8 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_update_sm_context(
     }
 
     if (param->ue_location) {
-        ueLocation.nr_location = amf_nsmf_build_nr_location_with_ntn(\n            &amf_ue->nr_tai, &amf_ue->nr_cgi, amf_ue);
+        ueLocation.nr_location = amf_nsmf_build_nr_location_with_ntn(
+            &amf_ue->nr_tai, &amf_ue->nr_cgi, amf_ue);
         if (!ueLocation.nr_location) {
             ogs_error("No ueLocation.nr_location");
             goto end;
@@ -625,7 +627,8 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_release_sm_context(
     }
 
     if (param->ue_location) {
-        ueLocation.nr_location = amf_nsmf_build_nr_location_with_ntn(\n            &amf_ue->nr_tai, &amf_ue->nr_cgi, amf_ue);
+        ueLocation.nr_location = amf_nsmf_build_nr_location_with_ntn(
+            &amf_ue->nr_tai, &amf_ue->nr_cgi, amf_ue);
         if (!ueLocation.nr_location) {
             ogs_error("No ueLocation.nr_location");
             goto end;
