@@ -52,7 +52,9 @@ bool smf_sbi_send_request(
 #define SMF_CREATE_STATE_BASE       0x10U           /* CREATE at 0x10 */
 
 #define SMF_CREATE_STATE_NONE                       \
-    (SMF_CREATE_STATE_BASE + 0x00U)  /* 0x00 */
+    (SMF_CREATE_STATE_BASE + 0x00U)  /* 0x10 */
+#define SMF_CREATE_STATE_INTER_PLMN_HANDOVER         \
+    (SMF_CREATE_STATE_BASE + 0x01U)  /* 0x11 */
 
 /* Base offset for SMF_UPDATE states */
 #define SMF_UPDATE_STATE_BASE       0x20U           /* UPDATE at 0x20–0x24 */
