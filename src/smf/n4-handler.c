@@ -415,11 +415,21 @@ void smf_5gc_n4_handle_session_modification_response(
         if (flags & OGS_PFCP_MODIFY_ACTIVATE) {
             if ((flags & OGS_PFCP_MODIFY_XN_HANDOVER) ||
                 (flags & OGS_PFCP_MODIFY_N2_HANDOVER)) {
-                sess->nsmf_param.request_indication =
-                    OpenAPI_request_indication_UE_REQ_PDU_SES_MOD;
+                if ((flags & OGS_PFCP_MODIFY_N2_HANDOVER) &&
+                    INTER_PLMN_HANDOVER_IN_VSMF(sess)) {
+                    /*
+                     * Target V-UPF/N3 is now active. Commit the mobility
+                     * path at the retained H-SMF before acknowledging
+                     * HandoverNotify to the target AMF.
+                     */
+                    sess->nsmf_param.request_indication =
+                        OpenAPI_request_indication_PDU_SES_MOB;
+                } else {
+                    sess->nsmf_param.request_indication =
+                        OpenAPI_request_indication_UE_REQ_PDU_SES_MOD;
+                }
 
                 sess->nsmf_param.up_cnx_state = OpenAPI_up_cnx_state_ACTIVATED;
-
                 sess->nsmf_param.serving_network = true;
 
                 ogs_assert(OGS_OK ==
@@ -435,6 +445,9 @@ void smf_5gc_n4_handle_session_modification_response(
                         OpenAPI_service_name_nsmf_pdusession, NULL,
                         smf_nsmf_pdusession_build_hsmf_update_data,
                         sess, stream,
+                        (flags & OGS_PFCP_MODIFY_N2_HANDOVER) &&
+                            INTER_PLMN_HANDOVER_IN_VSMF(sess) ?
+                            SMF_UPDATE_STATE_INTER_PLMN_HO_COMMIT :
                         flags & OGS_PFCP_MODIFY_XN_HANDOVER ?
                             SMF_UPDATE_STATE_ACTIVATED_FROM_XN_HANDOVER :
                             SMF_UPDATE_STATE_ACTIVATED_FROM_N2_HANDOVER,
