@@ -345,6 +345,8 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
         memset(&test_ue->registration_request_param, 0,
                 sizeof(test_ue->registration_request_param));
         test_ue->registration_request_param.guti = 1;
+        test_ue->registration_request_param.requested_nssai = 1;
+        test_ue->registration_request_param.last_visited_registered_tai = 1;
         /* plain copy for the NAS message container of SMC complete */
         nasbuf = testgmm_build_registration_request(
                 test_ue, NULL, false, false);
@@ -405,11 +407,16 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
         ABTS_INT_EQUAL(tc, OGS_NAS_5GS_CONFIGURATION_UPDATE_COMMAND,
                 test_ue->gmm_message_type);
 
-        /* The home path still carries traffic */
+        /*
+         * The home path still carries traffic: expect a G-PDU (the echo
+         * reply), not e.g. an Error Indication for a released session.
+         */
         rv = test_gtpu_send_ping(gtpu2, qos_flow, TEST_PING_IPV4);
         ABTS_INT_EQUAL(tc, OGS_OK, rv);
         recvbuf = testgnb_gtpu_read(gtpu2);
         ABTS_PTR_NOTNULL(tc, recvbuf);
+        ABTS_INT_EQUAL(tc, OGS_GTPU_MSGTYPE_GPDU,
+                ((ogs_gtp2_header_t *)recvbuf->data)->type);
         ogs_pkbuf_free(recvbuf);
     }
 
