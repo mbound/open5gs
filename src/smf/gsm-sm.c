@@ -1629,7 +1629,9 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                     sess, stream,
                                     OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
                                     OGS_PFCP_MODIFY_DL_ONLY|
-                                    OGS_PFCP_MODIFY_ACTIVATE,
+                                    OGS_PFCP_MODIFY_ACTIVATE|
+                                    /* TS 23.502 4.9.1.3.3 step 12 */
+                                    OGS_PFCP_MODIFY_END_MARKER,
                                     0, 0));
                             break;
 
