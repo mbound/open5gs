@@ -148,6 +148,9 @@ bool amf_sbi_send_n1_n2_failure_notify(
 bool amf_sbi_send_inter_amf_handover_complete(amf_ue_t *amf_ue);
 bool amf_sbi_send_inter_amf_handover_cancel(
         amf_ue_t *amf_ue, NGAP_Cause_t *cause);
+bool amf_sbi_send_inter_amf_ran_status_transfer(
+        amf_ue_t *amf_ue,
+        NGAP_RANStatusTransfer_TransparentContainer_t *transfer);
 
 bool amf_ue_have_session_release_pending(amf_ue_t *amf_ue);
 bool amf_sess_have_session_release_pending(amf_sess_t *sess);
