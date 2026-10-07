@@ -722,6 +722,251 @@ end:
     return success;
 }
 
+bool smf_sbi_send_sm_context_retrieved_data(
+        smf_sess_t *sess, ogs_sbi_stream_t *stream)
+{
+    int rv, enc_len;
+    bool success = false;
+    ogs_sbi_message_t sendmsg;
+    ogs_sbi_response_t *response = NULL;
+
+    OpenAPI_sm_context_retrieved_data_t RetrievedData;
+    OpenAPI_sm_context_t SmContext;
+    OpenAPI_snssai_t sNssai;
+    OpenAPI_snssai_t hplmnSnssai;
+    OpenAPI_ambr_t sessionAmbr;
+    OpenAPI_tunnel_info_t psaTunnelInfo;
+    OpenAPI_list_t *qosFlowsList = NULL;
+    OpenAPI_qos_flow_setup_item_t *qosFlowSetupItem = NULL;
+    OpenAPI_qos_flow_profile_t *qosFlowProfile = NULL;
+    OpenAPI_arp_t *Arp = NULL;
+
+    ogs_nas_qos_rule_t qos_rule;
+    ogs_nas_qos_rules_t authorized_qos_rules;
+    ogs_nas_qos_flow_description_t qos_flow_description;
+    ogs_nas_qos_flow_descriptions_t authorized_qos_flow_descriptions;
+
+    smf_bearer_t *qos_flow = NULL;
+    char ssc_mode[2];
+    char *ue_ipv4_address = NULL;
+    char *ue_ipv6_prefix = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(stream);
+
+    memset(&sendmsg, 0, sizeof(sendmsg));
+    memset(&RetrievedData, 0, sizeof(RetrievedData));
+    memset(&SmContext, 0, sizeof(SmContext));
+    memset(&sNssai, 0, sizeof(sNssai));
+    memset(&hplmnSnssai, 0, sizeof(hplmnSnssai));
+    memset(&sessionAmbr, 0, sizeof(sessionAmbr));
+    memset(&psaTunnelInfo, 0, sizeof(psaTunnelInfo));
+    memset(ssc_mode, 0, sizeof(ssc_mode));
+    memset(&qos_rule, 0, sizeof(qos_rule));
+    memset(&authorized_qos_rules, 0, sizeof(authorized_qos_rules));
+    memset(&qos_flow_description, 0, sizeof(qos_flow_description));
+    memset(&authorized_qos_flow_descriptions, 0,
+            sizeof(authorized_qos_flow_descriptions));
+
+    /*
+     * TS 29.502 RetrieveSMContext returns the complete 5GS SM context when
+     * smContextType=SM_CONTEXT.  For M3 the important invariant is that the
+     * PSA/H-UPF stays anchored while a V-SMF/V-UPF is inserted.  The PSA
+     * uplink F-TEID therefore becomes the N9 destination of the new V-UPF;
+     * the downlink FAR is deliberately not switched during preparation.
+     */
+    SmContext.pdu_session_id = sess->psi;
+    SmContext.dnn = sess->full_dnn ?
+        sess->full_dnn : sess->session.name;
+
+    sNssai.sst = sess->s_nssai.sst;
+    sNssai.sd = ogs_s_nssai_sd_to_string(sess->s_nssai.sd);
+    SmContext.s_nssai = &sNssai;
+
+    if (sess->mapped_hplmn_presence) {
+        hplmnSnssai.sst = sess->mapped_hplmn.sst;
+        hplmnSnssai.sd =
+            ogs_s_nssai_sd_to_string(sess->mapped_hplmn.sd);
+        SmContext.hplmn_snssai = &hplmnSnssai;
+    }
+
+    SmContext.pdu_session_type = sess->session.session_type;
+
+    if (sess->session.ssc_mode) {
+        ssc_mode[0] = ogs_to_hex(sess->session.ssc_mode);
+        SmContext.ssc_mode = ssc_mode;
+    }
+
+    if (sess->session.ambr.uplink)
+        sessionAmbr.uplink = ogs_sbi_bitrate_to_string(
+                sess->session.ambr.uplink, OGS_SBI_BITRATE_KBPS);
+    if (sess->session.ambr.downlink)
+        sessionAmbr.downlink = ogs_sbi_bitrate_to_string(
+                sess->session.ambr.downlink, OGS_SBI_BITRATE_KBPS);
+    if (sessionAmbr.uplink || sessionAmbr.downlink)
+        SmContext.session_ambr = &sessionAmbr;
+
+    /*
+     * local_ul_* is the PSA-side GTP-U endpoint currently terminating the
+     * access-side uplink.  The same PSA endpoint is advertised as the N9
+     * tunnel destination while the old downlink path remains intact.
+     */
+    if (sess->local_ul_addr)
+        psaTunnelInfo.ipv4_addr = ogs_ipstrdup(sess->local_ul_addr);
+    if (sess->local_ul_addr6)
+        psaTunnelInfo.ipv6_addr = ogs_ipstrdup(sess->local_ul_addr6);
+    if (sess->local_ul_teid)
+        psaTunnelInfo.gtp_teid =
+            ogs_uint32_to_0string(sess->local_ul_teid);
+    if (psaTunnelInfo.gtp_teid)
+        SmContext.psa_tunnel_info = &psaTunnelInfo;
+
+    SmContext.h_smf_instance_id =
+        NF_INSTANCE_ID(ogs_sbi_self()->nf_instance);
+
+    if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
+        sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
+        uint32_t addr = sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4 ?
+            sess->paa.addr : sess->paa.both.addr;
+        ue_ipv4_address = ogs_ipv4_to_string(addr);
+        SmContext.ue_ipv4_address = ue_ipv4_address;
+    }
+
+    if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
+        sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
+        uint8_t *addr6 =
+            sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV6 ?
+                sess->paa.addr6 : sess->paa.both.addr6;
+        ue_ipv6_prefix =
+            ogs_ipv6prefix_to_string(addr6, OGS_IPV6_DEFAULT_PREFIX_LEN);
+        SmContext.ue_ipv6_prefix = ue_ipv6_prefix;
+    }
+
+    /*
+     * M3 starts with the Open5GS single-default-QoS-flow baseline used by
+     * the existing HR Create response.  Preserve the complete default-flow
+     * rule/profile so the inserted V-SMF can recreate its local bearer.
+     */
+    qos_flow = smf_default_bearer_in_sess(sess);
+    if (qos_flow) {
+        qosFlowsList = OpenAPI_list_create();
+        ogs_assert(qosFlowsList);
+
+        gsm_encode_default_qos_rule(&qos_rule, qos_flow);
+        rv = ogs_nas_build_qos_rules(
+                &authorized_qos_rules, &qos_rule, 1);
+        if (rv != OGS_OK || !authorized_qos_rules.length)
+            goto cleanup;
+
+        gsm_encode_default_qos_flow_description(
+                &qos_flow_description, qos_flow);
+        rv = ogs_nas_build_qos_flow_descriptions(
+                &authorized_qos_flow_descriptions,
+                &qos_flow_description, 1);
+        if (rv != OGS_OK ||
+            !authorized_qos_flow_descriptions.length)
+            goto cleanup;
+
+        qosFlowSetupItem = ogs_calloc(1, sizeof(*qosFlowSetupItem));
+        ogs_assert(qosFlowSetupItem);
+        qosFlowSetupItem->qfi = qos_flow->qfi;
+        if (qos_rule.DQR_bit) {
+            qosFlowSetupItem->is_default_qos_rule_ind = true;
+            qosFlowSetupItem->default_qos_rule_ind = true;
+        }
+
+        enc_len = ogs_base64_encoded_size(authorized_qos_rules.length);
+        qosFlowSetupItem->qos_rules = ogs_calloc(1, enc_len);
+        ogs_assert(qosFlowSetupItem->qos_rules);
+        ogs_assert(ogs_base64_encode_from_buffer(
+                qosFlowSetupItem->qos_rules, enc_len,
+                authorized_qos_rules.buffer,
+                authorized_qos_rules.length) > 0);
+        ogs_free(authorized_qos_rules.buffer);
+        authorized_qos_rules.buffer = NULL;
+
+        enc_len = ogs_base64_encoded_size(
+                authorized_qos_flow_descriptions.length);
+        qosFlowSetupItem->qos_flow_description =
+            ogs_calloc(1, enc_len);
+        ogs_assert(qosFlowSetupItem->qos_flow_description);
+        ogs_assert(ogs_base64_encode_from_buffer(
+                qosFlowSetupItem->qos_flow_description, enc_len,
+                authorized_qos_flow_descriptions.buffer,
+                authorized_qos_flow_descriptions.length) > 0);
+        ogs_free(authorized_qos_flow_descriptions.buffer);
+        authorized_qos_flow_descriptions.buffer = NULL;
+
+        Arp = ogs_calloc(1, sizeof(*Arp));
+        ogs_assert(Arp);
+        Arp->priority_level = qos_flow->qos.arp.priority_level;
+        Arp->preempt_cap =
+            qos_flow->qos.arp.pre_emption_capability ==
+                OGS_5GC_PRE_EMPTION_ENABLED ?
+                OpenAPI_preemption_capability_MAY_PREEMPT :
+                OpenAPI_preemption_capability_NOT_PREEMPT;
+        Arp->preempt_vuln =
+            qos_flow->qos.arp.pre_emption_vulnerability ==
+                OGS_5GC_PRE_EMPTION_ENABLED ?
+                OpenAPI_preemption_vulnerability_PREEMPTABLE :
+                OpenAPI_preemption_vulnerability_NOT_PREEMPTABLE;
+
+        qosFlowProfile = ogs_calloc(1, sizeof(*qosFlowProfile));
+        ogs_assert(qosFlowProfile);
+        qosFlowProfile->_5qi = qos_flow->qos.index;
+        qosFlowProfile->arp = Arp;
+        qosFlowSetupItem->qos_flow_profile = qosFlowProfile;
+
+        OpenAPI_list_add(qosFlowsList, qosFlowSetupItem);
+        SmContext.qos_flows_list = qosFlowsList;
+    }
+
+    RetrievedData.sm_context = &SmContext;
+    sendmsg.SmContextRetrievedData = &RetrievedData;
+
+    response = ogs_sbi_build_response(
+            &sendmsg, OGS_SBI_HTTP_STATUS_OK);
+    if (!response)
+        goto cleanup;
+
+    if (ogs_sbi_server_send_response(stream, response) != true)
+        goto cleanup;
+
+    success = true;
+
+cleanup:
+    if (authorized_qos_rules.buffer)
+        ogs_free(authorized_qos_rules.buffer);
+    if (authorized_qos_flow_descriptions.buffer)
+        ogs_free(authorized_qos_flow_descriptions.buffer);
+
+    CLEAR_QOS_FLOWS_SETUP_LIST(SmContext.qos_flows_list);
+
+    if (sNssai.sd)
+        ogs_free(sNssai.sd);
+    if (hplmnSnssai.sd)
+        ogs_free(hplmnSnssai.sd);
+
+    if (sessionAmbr.uplink)
+        ogs_free(sessionAmbr.uplink);
+    if (sessionAmbr.downlink)
+        ogs_free(sessionAmbr.downlink);
+
+    if (psaTunnelInfo.ipv4_addr)
+        ogs_free(psaTunnelInfo.ipv4_addr);
+    if (psaTunnelInfo.ipv6_addr)
+        ogs_free(psaTunnelInfo.ipv6_addr);
+    if (psaTunnelInfo.gtp_teid)
+        ogs_free(psaTunnelInfo.gtp_teid);
+
+    if (ue_ipv4_address)
+        ogs_free(ue_ipv4_address);
+    if (ue_ipv6_prefix)
+        ogs_free(ue_ipv6_prefix);
+
+    return success;
+}
+
 void smf_sbi_send_sm_context_updated_data(
         smf_sess_t *sess, ogs_sbi_stream_t *stream,
         OpenAPI_up_cnx_state_e up_cnx_state,
