@@ -112,6 +112,9 @@ OpenAPI_list_t *amf_namf_comm_encode_ue_session_context_list(
     ogs_assert(PduSessionList);
 
     ogs_list_for_each(&amf_ue->sess_list, sess) {
+        ogs_sbi_nf_instance_t *serving_smf = NULL;
+        ogs_sbi_nf_instance_t *home_smf = NULL;
+
         PduSessionContext = ogs_calloc(1, sizeof(*PduSessionContext));
         ogs_assert(PduSessionContext);
 
@@ -122,6 +125,34 @@ OpenAPI_list_t *amf_namf_comm_encode_ue_session_context_list(
         ogs_assert(sess->sm_context_resource_uri);
         PduSessionContext->sm_context_ref =
             ogs_strdup(sess->sm_context_resource_uri);
+
+        /*
+         * TS 29.518 PduSessionContext:
+         *  - hsmfId is present for non-roaming and HR sessions;
+         *  - vsmfId is present for roaming sessions.
+         *
+         * These bindings are needed by the target AMF to distinguish a
+         * retained H-SMF anchor from the V-SMF context that must be inserted
+         * or changed during inter-PLMN N2 handover.
+         */
+        serving_smf = OGS_SBI_GET_NF_INSTANCE(
+                sess->sbi.service_name_array[
+                    OpenAPI_service_name_nsmf_pdusession]);
+        home_smf = OGS_SBI_GET_NF_INSTANCE(
+                sess->sbi.home_nsmf_pdusession);
+
+        if (ogs_sbi_plmn_id_in_vplmn(&amf_ue->home_plmn_id) == true) {
+            if (serving_smf && serving_smf->id)
+                PduSessionContext->vsmf_id =
+                    ogs_strdup(serving_smf->id);
+            if (home_smf && home_smf->id)
+                PduSessionContext->hsmf_id =
+                    ogs_strdup(home_smf->id);
+        } else {
+            if (serving_smf && serving_smf->id)
+                PduSessionContext->hsmf_id =
+                    ogs_strdup(serving_smf->id);
+        }
 
         sNSSAI->sst = sess->s_nssai.sst;
         sNSSAI->sd = ogs_s_nssai_sd_to_string(sess->s_nssai.sd);
