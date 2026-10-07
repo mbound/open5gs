@@ -285,6 +285,8 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
 
     /* Send HandoverNotify from the target TAI/gNB. */
     test_ue->nr_tai = target_tai;
+    memcpy(&test_ue->nr_cgi.plmn_id,
+            &target_tai.plmn_id, OGS_PLMN_ID_LEN);
     test_ue->nr_cgi.cell_id = 0x40011;
     sendbuf = testngap_build_handover_notify(test_ue);
     ABTS_PTR_NOTNULL(tc, sendbuf);
