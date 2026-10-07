@@ -2036,6 +2036,45 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                             smf_sbi_send_sm_context_updated_data_ho_state(
                                     sess, stream, OpenAPI_ho_state_COMPLETED);
                             break;
+                        case SMF_UPDATE_STATE_INTER_PLMN_HO_COMMIT:
+                            /*
+                             * The retained H-SMF/H-UPF has committed the
+                             * target V-UPF N9 path. Only now may the V-SMF
+                             * complete HandoverNotify towards the target AMF.
+                             */
+                            sess->up_cnx_state =
+                                OpenAPI_up_cnx_state_ACTIVATED;
+
+                            sess->inter_plmn_handover.pending = false;
+                            if (sess->inter_plmn_handover.
+                                    source_sm_context_uri) {
+                                ogs_free(sess->inter_plmn_handover.
+                                    source_sm_context_uri);
+                                sess->inter_plmn_handover.
+                                    source_sm_context_uri = NULL;
+                            }
+                            if (sess->inter_plmn_handover.source_smf_id) {
+                                ogs_free(sess->inter_plmn_handover.
+                                    source_smf_id);
+                                sess->inter_plmn_handover.source_smf_id = NULL;
+                            }
+                            if (sess->inter_plmn_handover.target_id) {
+                                OpenAPI_ng_ran_target_id_free(
+                                    sess->inter_plmn_handover.target_id);
+                                sess->inter_plmn_handover.target_id = NULL;
+                            }
+                            if (sess->inter_plmn_handover.handover_required) {
+                                ogs_pkbuf_free(sess->inter_plmn_handover.
+                                    handover_required);
+                                sess->inter_plmn_handover.
+                                    handover_required = NULL;
+                            }
+
+                            smf_sbi_send_sm_context_updated_data_ho_state(
+                                    sess, stream, OpenAPI_ho_state_COMPLETED);
+                            ogs_info("[%d] Inter-PLMN HR handover committed",
+                                    sess->psi);
+                            break;
                         case SMF_UPDATE_STATE_UE_REQ_MOD:
                             /*
                              * AMF stream was stored when HsmfUpdateData
