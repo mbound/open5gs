@@ -29,6 +29,19 @@ testapp_inter_amf_n2_exe = executable('inter-amf-n2',
 test('inter-amf-n2', testapp_inter_amf_n2_exe,
     is_parallel : false, suite: '5gc')
 
+testapp_inter_plmn_hr_n2_sources = files('''
+    abts-inter-plmn-hr-n2-main.c
+    inter-plmn-hr-n2-handover-test.c
+'''.split())
+
+testapp_inter_plmn_hr_n2_exe = executable('inter-plmn-hr-n2',
+    sources : testapp_inter_plmn_hr_n2_sources,
+    c_args : testunit_core_cc_flags,
+    dependencies : libtest5gc_dep)
+
+test('inter-plmn-hr-n2', testapp_inter_plmn_hr_n2_exe,
+    is_parallel : false, suite: '5gc')
+
 testapp_transfer_sources = files('''
     abts-main.c
     ue-context-transfer-test.c
