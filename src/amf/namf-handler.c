@@ -334,6 +334,31 @@ int amf_namf_comm_handle_create_ue_context_request(
             source_to_target->data, source_to_target->len,
             &amf_ue->handover.container);
 
+    if (sess->inter_plmn_handover.pending) {
+        sess->inter_plmn_handover.handover_required =
+            ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
+        if (!sess->inter_plmn_handover.handover_required)
+            goto cleanup;
+        ogs_pkbuf_put_data(
+                sess->inter_plmn_handover.handover_required,
+                handover_required->data, handover_required->len);
+
+        sess->inter_plmn_handover.target_id =
+            OpenAPI_ng_ran_target_id_copy(
+                    NULL, CreateData->target_id);
+        if (!sess->inter_plmn_handover.target_id)
+            goto cleanup;
+
+        r = amf_sbi_start_inter_plmn_handover(target_ue, sess);
+        if (r != OGS_OK)
+            goto cleanup;
+
+        ogs_info("[%s:%d] CreateUEContext accepted; selecting target V-SMF "
+                "for HR inter-PLMN handover",
+                ue_context_id, sess->psi);
+        return OGS_OK;
+    }
+
     param.n2smbuf = ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
     if (!param.n2smbuf)
         goto cleanup;
