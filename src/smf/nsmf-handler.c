@@ -714,6 +714,306 @@ bool smf_nsmf_handle_create_sm_context(
     return true;
 }
 
+bool smf_nsmf_handle_retrieved_sm_context_in_vsmf(
+    smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
+{
+    int rv;
+    smf_ue_t *smf_ue = NULL;
+    OpenAPI_sm_context_retrieved_data_t *RetrievedData = NULL;
+    OpenAPI_sm_context_t *SmContext = NULL;
+    OpenAPI_tunnel_info_t *psaTunnelInfo = NULL;
+    OpenAPI_ambr_t *sessionAmbr = NULL;
+    OpenAPI_lnode_t *node = NULL;
+    OpenAPI_list_t *qosFlowsSetupList = NULL;
+    smf_bearer_t *qos_flow = NULL;
+    ogs_pfcp_pdr_t *dl_pdr = NULL;
+    ogs_pfcp_pdr_t *ul_pdr = NULL;
+    ogs_pfcp_far_t *ul_far = NULL;
+    ogs_ip_t ue_ip;
+    uint8_t prefixlen = 0;
+
+    ogs_assert(sess);
+    ogs_assert(stream);
+    ogs_assert(recvmsg);
+    ogs_assert(INTER_PLMN_HANDOVER_IN_VSMF(sess));
+
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    ogs_assert(smf_ue);
+
+    if (recvmsg->res_status != OGS_SBI_HTTP_STATUS_OK) {
+        ogs_error("[%s:%d] RetrieveSMContext failed [%d]",
+                smf_ue->supi, sess->psi, recvmsg->res_status);
+        return false;
+    }
+
+    RetrievedData = recvmsg->SmContextRetrievedData;
+    if (!RetrievedData || !RetrievedData->sm_context) {
+        ogs_error("[%s:%d] No retrieved SM context",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+    SmContext = RetrievedData->sm_context;
+
+    if (SmContext->pdu_session_id != sess->psi) {
+        ogs_error("[%s:%d] Retrieved PDU session ID mismatch [%d]",
+                smf_ue->supi, sess->psi, SmContext->pdu_session_id);
+        return false;
+    }
+
+    if (SmContext->h_smf_instance_id && sess->h_smf_id &&
+        strcmp(SmContext->h_smf_instance_id, sess->h_smf_id) != 0) {
+        ogs_error("[%s:%d] Retrieved H-SMF changed [%s != %s]",
+                smf_ue->supi, sess->psi,
+                SmContext->h_smf_instance_id, sess->h_smf_id);
+        return false;
+    }
+
+    if (!SmContext->pdu_session_type) {
+        ogs_error("[%s:%d] Retrieved context has no pduSessionType",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+    sess->paa.session_type = sess->session.session_type =
+        SmContext->pdu_session_type;
+
+    if (SmContext->ssc_mode) {
+        sess->session.ssc_mode = ogs_from_hex(SmContext->ssc_mode[0]);
+        if (sess->session.ssc_mode < OGS_SSC_MODE_1 ||
+            sess->session.ssc_mode > OGS_SSC_MODE_3) {
+            ogs_error("[%s:%d] Invalid retrieved sscMode [%s]",
+                    smf_ue->supi, sess->psi, SmContext->ssc_mode);
+            return false;
+        }
+    }
+
+    memset(&ue_ip, 0, sizeof(ue_ip));
+    if (SmContext->ue_ipv4_address) {
+        rv = ogs_ipv4_from_string(
+                &ue_ip.addr, SmContext->ue_ipv4_address);
+        if (rv != OGS_OK) {
+            ogs_error("[%s:%d] Invalid retrieved IPv4 address [%s]",
+                    smf_ue->supi, sess->psi,
+                    SmContext->ue_ipv4_address);
+            return false;
+        }
+        ue_ip.ipv4 = 1;
+    }
+    if (SmContext->ue_ipv6_prefix) {
+        rv = ogs_ipv6prefix_from_string(
+                ue_ip.addr6, &prefixlen, SmContext->ue_ipv6_prefix);
+        if (rv != OGS_OK) {
+            ogs_error("[%s:%d] Invalid retrieved IPv6 prefix [%s]",
+                    smf_ue->supi, sess->psi,
+                    SmContext->ue_ipv6_prefix);
+            return false;
+        }
+        ue_ip.ipv6 = 1;
+    }
+
+    switch (sess->session.session_type) {
+    case OGS_PDU_SESSION_TYPE_IPV4:
+        if (!ue_ip.ipv4)
+            return false;
+        sess->paa.addr = ue_ip.addr;
+        break;
+    case OGS_PDU_SESSION_TYPE_IPV6:
+        if (!ue_ip.ipv6)
+            return false;
+        sess->paa.len = prefixlen;
+        memcpy(sess->paa.addr6, ue_ip.addr6, OGS_IPV6_LEN);
+        break;
+    case OGS_PDU_SESSION_TYPE_IPV4V6:
+        if (!ue_ip.ipv4 || !ue_ip.ipv6)
+            return false;
+        sess->paa.both.addr = ue_ip.addr;
+        sess->paa.both.len = prefixlen;
+        memcpy(sess->paa.both.addr6, ue_ip.addr6, OGS_IPV6_LEN);
+        break;
+    default:
+        ogs_error("[%s:%d] Invalid retrieved PDU session type [%d]",
+                smf_ue->supi, sess->psi, sess->session.session_type);
+        return false;
+    }
+
+    psaTunnelInfo = SmContext->psa_tunnel_info;
+    if (!psaTunnelInfo ||
+        !(psaTunnelInfo->ipv4_addr || psaTunnelInfo->ipv6_addr) ||
+        !psaTunnelInfo->gtp_teid) {
+        ogs_error("[%s:%d] Retrieved context has no PSA tunnel",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+
+    memset(&sess->remote_ul_ip, 0, sizeof(sess->remote_ul_ip));
+    if (psaTunnelInfo->ipv4_addr) {
+        rv = ogs_ipv4_from_string(
+                &sess->remote_ul_ip.addr, psaTunnelInfo->ipv4_addr);
+        if (rv != OGS_OK)
+            return false;
+        sess->remote_ul_ip.ipv4 = 1;
+        sess->remote_ul_ip.len = OGS_IPV4_LEN;
+    }
+    if (psaTunnelInfo->ipv6_addr) {
+        rv = ogs_ipv6addr_from_string(
+                sess->remote_ul_ip.addr6, psaTunnelInfo->ipv6_addr);
+        if (rv != OGS_OK)
+            return false;
+        sess->remote_ul_ip.ipv6 = 1;
+        sess->remote_ul_ip.len = OGS_IPV6_LEN;
+    }
+    if (sess->remote_ul_ip.ipv4 && sess->remote_ul_ip.ipv6)
+        sess->remote_ul_ip.len = OGS_IPV4V6_LEN;
+
+    sess->remote_ul_teid =
+        ogs_uint64_from_string_hexadecimal(psaTunnelInfo->gtp_teid);
+
+    sessionAmbr = SmContext->session_ambr;
+    if (sessionAmbr) {
+        if (sessionAmbr->uplink)
+            sess->session.ambr.uplink =
+                ogs_sbi_bitrate_from_string(sessionAmbr->uplink);
+        if (sessionAmbr->downlink)
+            sess->session.ambr.downlink =
+                ogs_sbi_bitrate_from_string(sessionAmbr->downlink);
+    }
+
+    if (!SmContext->qos_flows_list || !SmContext->qos_flows_list->count) {
+        ogs_error("[%s:%d] Retrieved context has no QoS flow list",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+
+    qosFlowsSetupList = OpenAPI_list_create();
+    ogs_assert(qosFlowsSetupList);
+    OpenAPI_list_for_each(SmContext->qos_flows_list, node) {
+        OpenAPI_qos_flow_setup_item_t *src = node->data;
+        OpenAPI_qos_flow_setup_item_t *dst = NULL;
+
+        if (!src || !src->qfi || !src->qos_flow_profile) {
+            ogs_error("[%s:%d] Invalid retrieved QoS flow",
+                    smf_ue->supi, sess->psi);
+            CLEAR_QOS_FLOWS_SETUP_LIST(qosFlowsSetupList);
+            return false;
+        }
+
+        dst = OpenAPI_qos_flow_setup_item_copy(NULL, src);
+        if (!dst) {
+            CLEAR_QOS_FLOWS_SETUP_LIST(qosFlowsSetupList);
+            return false;
+        }
+        OpenAPI_list_add(qosFlowsSetupList, dst);
+    }
+
+    CLEAR_QOS_FLOWS_SETUP_LIST(sess->h_smf_qos_flows_setup_list);
+    sess->h_smf_qos_flows_setup_list = qosFlowsSetupList;
+
+    /*
+     * Build the new visited UP leg.  Its uplink N9 FAR points at the
+     * retained PSA/H-UPF tunnel from RetrieveSMContext.  Downlink remains
+     * buffered until the H-SMF has accepted handover preparation and the
+     * target RAN has returned HandoverRequestAcknowledge.
+     */
+    smf_sess_select_upf(sess);
+    if (!sess->pfcp_node ||
+        !OGS_FSM_CHECK(&sess->pfcp_node->sm, smf_pfcp_state_associated)) {
+        ogs_error("[%s:%d] No associated visited UPF",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+
+    smf_bearer_remove_all(sess);
+    qos_flow = smf_vcn_tunnel_add(sess);
+    ogs_assert(qos_flow);
+
+    dl_pdr = qos_flow->dl_pdr;
+    ul_pdr = qos_flow->ul_pdr;
+    ul_far = qos_flow->ul_far;
+    ogs_assert(dl_pdr);
+    ogs_assert(ul_pdr);
+    ogs_assert(ul_far);
+
+    dl_pdr->outer_header_removal_len = 1;
+    dl_pdr->outer_header_removal.description =
+        OGS_PFCP_OUTER_HEADER_REMOVAL_GTPU_UDP_IP;
+    ul_pdr->outer_header_removal_len = 1;
+    ul_pdr->outer_header_removal.description =
+        OGS_PFCP_OUTER_HEADER_REMOVAL_GTPU_UDP_IP;
+
+    if (sess->pfcp_node->up_function_features.ftup) {
+        dl_pdr->f_teid.ipv4 = 1;
+        dl_pdr->f_teid.ipv6 = 1;
+        dl_pdr->f_teid.ch = 1;
+        dl_pdr->f_teid_len = 1;
+
+        ul_pdr->f_teid.ipv4 = 1;
+        ul_pdr->f_teid.ipv6 = 1;
+        ul_pdr->f_teid.ch = 1;
+        ul_pdr->f_teid_len = 1;
+    } else {
+        ogs_assert(sess->pfcp_node->addr_list);
+
+        if (sess->local_dl_addr)
+            ogs_freeaddrinfo(sess->local_dl_addr);
+        if (sess->local_dl_addr6)
+            ogs_freeaddrinfo(sess->local_dl_addr6);
+        if (sess->local_ul_addr)
+            ogs_freeaddrinfo(sess->local_ul_addr);
+        if (sess->local_ul_addr6)
+            ogs_freeaddrinfo(sess->local_ul_addr6);
+        sess->local_dl_addr = sess->local_dl_addr6 = NULL;
+        sess->local_ul_addr = sess->local_ul_addr6 = NULL;
+
+        if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET) {
+            ogs_assert(OGS_OK == ogs_copyaddrinfo(
+                    &sess->local_dl_addr, sess->pfcp_node->addr_list));
+            ogs_assert(OGS_OK == ogs_copyaddrinfo(
+                    &sess->local_ul_addr, sess->pfcp_node->addr_list));
+        } else if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET6) {
+            ogs_assert(OGS_OK == ogs_copyaddrinfo(
+                    &sess->local_dl_addr6, sess->pfcp_node->addr_list));
+            ogs_assert(OGS_OK == ogs_copyaddrinfo(
+                    &sess->local_ul_addr6, sess->pfcp_node->addr_list));
+        } else {
+            ogs_assert_if_reached();
+        }
+
+        sess->local_dl_teid = dl_pdr->teid;
+        sess->local_ul_teid = ul_pdr->teid;
+
+        ogs_assert(OGS_OK == ogs_pfcp_sockaddr_to_f_teid(
+                sess->local_dl_addr, sess->local_dl_addr6,
+                &dl_pdr->f_teid, &dl_pdr->f_teid_len));
+        dl_pdr->f_teid.teid = sess->local_dl_teid;
+
+        ogs_assert(OGS_OK == ogs_pfcp_sockaddr_to_f_teid(
+                sess->local_ul_addr, sess->local_ul_addr6,
+                &ul_pdr->f_teid, &ul_pdr->f_teid_len));
+        ul_pdr->f_teid.teid = sess->local_ul_teid;
+    }
+
+    dl_pdr->precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
+    ul_pdr->precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
+
+    ul_far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
+    ogs_assert(OGS_OK == ogs_pfcp_ip_to_outer_header_creation(
+            &sess->remote_ul_ip,
+            &ul_far->outer_header_creation,
+            &ul_far->outer_header_creation_len));
+    ul_far->outer_header_creation.teid = sess->remote_ul_teid;
+
+    rv = smf_5gc_pfcp_send_session_establishment_request(
+            sess, stream, 0);
+    if (rv != OGS_OK) {
+        ogs_error("[%s:%d] Cannot establish visited UPF leg",
+                smf_ue->supi, sess->psi);
+        return false;
+    }
+
+    ogs_info("[%s:%d] Retrieved anchor context; V-UPF N9 leg requested",
+            smf_ue->supi, sess->psi);
+    return true;
+}
+
 bool smf_nsmf_handle_retrieve_sm_context(
     smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_sbi_message_t *message)
 {
