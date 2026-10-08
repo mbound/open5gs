@@ -33,7 +33,7 @@ wait_for() {
     sleep 2
   done
 }
-registered() { [ "$(docker compose logs nrf-$1 2>/dev/null | grep -c 'NF registered')" -ge "$2" ]; }
+registered() { [ "$(docker compose logs nrf-$1 2>/dev/null | grep -c 'NF registered \[Heartbeat')" -ge "$2" ]; }
 for db in mongodb-h mongodb-v; do
   wait_for 120 "$db" docker compose exec -T $db mongosh --quiet --eval 'db.runCommand({ping: 1})'
 done
