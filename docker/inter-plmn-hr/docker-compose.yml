@@ -1,0 +1,236 @@
+# Two-PLMN home-routed deployment: HPLMN 999-70 + VPLMN 001-01, one container per NF.
+# See README.md. Run from this directory:
+#   docker compose build base build ueransim             # images (once per source change)
+#   docker compose up -d                                 # HPLMN 999-70 + gnb-h/ue-h
+#   docker compose --profile vplmn up -d                 # + VPLMN 001-01 + gnb-v/ue-v
+# No host ports are published.
+name: open5gs-hr
+
+x-nf: &nf
+  image: ${USER:-open5gs}/${DIST:-ubuntu}-${TAG:-noble}-open5gs-build
+  restart: unless-stopped
+  cpus: 1
+  volumes: [ "./configs:/etc/open5gs-hr:ro" ]
+x-h: &h "/etc/open5gs-hr/999-70.yaml"
+x-v: &v "/etc/open5gs-hr/001-01.yaml"
+x-upf-cmd: &upf-cmd
+  - sh
+  - -c
+  - |
+    ip tuntap add name ogstun mode tun && ip addr add $$UE_GW dev ogstun && ip link set ogstun up
+    exec open5gs-upfd -c $$CFG
+x-ran: &ran
+  image: ${USER:-open5gs}/ueransim
+  restart: unless-stopped
+  cpus: 1
+  volumes: [ "./ueransim:/etc/ueransim:ro" ]
+
+networks:
+  sbi-h: { ipam: { config: [ { subnet: 172.30.1.0/24 } ] } }
+  sbi-v: { ipam: { config: [ { subnet: 172.30.2.0/24 } ] } }
+  ipx:   { ipam: { config: [ { subnet: 172.30.3.0/24 } ] } }
+  ran:   { ipam: { config: [ { subnet: 172.30.4.0/24 } ] } }
+
+services:
+  # ------------------------------------------------------------ images
+  # base/build as in docker/docker-compose.yml (ubuntu noble; bookworm's libcurl
+  # breaks SCP HTTP/2 forwarding). NINJA_JOBS caps the build on a shared host.
+  base:
+    build:
+      context: ../${DIST:-ubuntu}/${TAG:-noble}/base
+      args: { dist: "${DIST:-ubuntu}", tag: "${TAG:-noble}" }
+    image: ${USER:-open5gs}/${DIST:-ubuntu}-${TAG:-noble}-open5gs-base
+    profiles: [ images ]
+  build:
+    build:
+      context: ../../
+      dockerfile: docker/build/Dockerfile
+      args: { dist: "${DIST:-ubuntu}", tag: "${TAG:-noble}", username: "${USER:-open5gs}", NINJA_JOBS: "${NINJA_JOBS:-4}" }
+    image: ${USER:-open5gs}/${DIST:-ubuntu}-${TAG:-noble}-open5gs-build
+    profiles: [ images ]
+  ueransim:
+    build:
+      context: ./ueransim
+      additional_contexts: { ueransim-src: "${UERANSIM_SRC:-../../../ueransim}" }
+    image: ${USER:-open5gs}/ueransim
+    profiles: [ images ]
+
+  # ------------------------------------------------------------ HPLMN 999-70
+  mongodb-h:
+    image: mongo:7
+    restart: unless-stopped
+    cpus: 1
+    networks: { sbi-h: { ipv4_address: 172.30.1.100 } }
+  nrf-h:
+    <<: *nf
+    command: [ open5gs-nrfd, -c, *h ]
+    networks: { sbi-h: { ipv4_address: 172.30.1.10, aliases: [ nrf.5gc.mnc070.mcc999.3gppnetwork.org ] } }
+  scp-h:
+    <<: *nf
+    command: [ open5gs-scpd, -c, *h ]
+    networks: { sbi-h: { ipv4_address: 172.30.1.200, aliases: [ scp.5gc.mnc070.mcc999.3gppnetwork.org ] } }
+  sepp-h:
+    <<: *nf
+    command: [ open5gs-seppd, -c, *h ]
+    networks:
+      sbi-h: { ipv4_address: 172.30.1.250, aliases: [ sepp.5gc.mnc070.mcc999.3gppnetwork.org ] }
+      ipx: { ipv4_address: 172.30.3.10 }
+  amf-h:
+    <<: *nf
+    command: [ open5gs-amfd, -c, *h ]
+    networks:
+      sbi-h: { ipv4_address: 172.30.1.5, aliases: [ amf.5gc.mnc070.mcc999.3gppnetwork.org ] }
+      ran: { ipv4_address: 172.30.4.5 }
+  smf-h:
+    <<: *nf
+    command: [ open5gs-smfd, -c, *h ]
+    networks: { sbi-h: { ipv4_address: 172.30.1.4, aliases: [ smf.5gc.mnc070.mcc999.3gppnetwork.org ] } }
+  upf-h:
+    <<: *nf
+    command: *upf-cmd
+    environment: { CFG: *h, UE_GW: 10.45.0.1/16 }
+    cap_add: [ NET_ADMIN ]
+    devices: [ /dev/net/tun ]
+    networks:
+      sbi-h: { ipv4_address: 172.30.1.7 }
+      ran: { ipv4_address: 172.30.4.7 }
+  ausf-h:
+    <<: *nf
+    command: [ open5gs-ausfd, -c, *h ]
+    networks: { sbi-h: { ipv4_address: 172.30.1.11, aliases: [ ausf.5gc.mnc070.mcc999.3gppnetwork.org ] } }
+  udm-h:
+    <<: *nf
+    command: [ open5gs-udmd, -c, *h ]
+    networks: { sbi-h: { ipv4_address: 172.30.1.12, aliases: [ udm.5gc.mnc070.mcc999.3gppnetwork.org ] } }
+  pcf-h:
+    <<: *nf
+    command: [ open5gs-pcfd, -c, *h ]
+    networks: { sbi-h: { ipv4_address: 172.30.1.13, aliases: [ pcf.5gc.mnc070.mcc999.3gppnetwork.org ] } }
+  nssf-h:
+    <<: *nf
+    command: [ open5gs-nssfd, -c, *h ]
+    networks: { sbi-h: { ipv4_address: 172.30.1.14, aliases: [ nssf.5gc.mnc070.mcc999.3gppnetwork.org ] } }
+  bsf-h:
+    <<: *nf
+    command: [ open5gs-bsfd, -c, *h ]
+    networks: { sbi-h: { ipv4_address: 172.30.1.15, aliases: [ bsf.5gc.mnc070.mcc999.3gppnetwork.org ] } }
+  udr-h:
+    <<: *nf
+    command: [ open5gs-udrd, -c, *h ]
+    networks: { sbi-h: { ipv4_address: 172.30.1.20, aliases: [ udr.5gc.mnc070.mcc999.3gppnetwork.org ] } }
+
+  gnb-h:
+    <<: *ran
+    command: [ nr-gnb, -c, /etc/ueransim/gnb-h.yaml ]
+    networks: { ran: { ipv4_address: 172.30.4.21 } }
+  ue-h:
+    <<: *ran
+    command: [ nr-ue, -c, /etc/ueransim/ue-h.yaml ]
+    cap_add: [ NET_ADMIN ]
+    devices: [ /dev/net/tun ]
+    networks: { ran: { ipv4_address: 172.30.4.31 } }
+
+  # ------------------------------------------------------------ VPLMN 001-01
+  mongodb-v:
+    image: mongo:7
+    profiles: [ vplmn ]
+    restart: unless-stopped
+    cpus: 1
+    networks: { sbi-v: { ipv4_address: 172.30.2.100 } }
+  nrf-v:
+    <<: *nf
+    profiles: [ vplmn ]
+    command: [ open5gs-nrfd, -c, *v ]
+    networks: { sbi-v: { ipv4_address: 172.30.2.10, aliases: [ nrf.5gc.mnc001.mcc001.3gppnetwork.org ] } }
+  scp-v:
+    <<: *nf
+    profiles: [ vplmn ]
+    command: [ open5gs-scpd, -c, *v ]
+    networks: { sbi-v: { ipv4_address: 172.30.2.200, aliases: [ scp.5gc.mnc001.mcc001.3gppnetwork.org ] } }
+  sepp-v:
+    <<: *nf
+    profiles: [ vplmn ]
+    command: [ open5gs-seppd, -c, *v ]
+    networks:
+      sbi-v: { ipv4_address: 172.30.2.250, aliases: [ sepp.5gc.mnc001.mcc001.3gppnetwork.org ] }
+      ipx: { ipv4_address: 172.30.3.20 }
+  amf-v:
+    <<: *nf
+    profiles: [ vplmn ]
+    command: [ open5gs-amfd, -c, *v ]
+    networks:
+      sbi-v: { ipv4_address: 172.30.2.5, aliases: [ amf.5gc.mnc001.mcc001.3gppnetwork.org ] }
+      ran: { ipv4_address: 172.30.4.6 }
+  smf-v:
+    <<: *nf
+    profiles: [ vplmn ]
+    command: [ open5gs-smfd, -c, *v ]
+    networks: { sbi-v: { ipv4_address: 172.30.2.4, aliases: [ smf.5gc.mnc001.mcc001.3gppnetwork.org ] } }
+  upf-v:
+    <<: *nf
+    profiles: [ vplmn ]
+    command: *upf-cmd
+    environment: { CFG: *v, UE_GW: 10.46.0.1/16 }
+    cap_add: [ NET_ADMIN ]
+    devices: [ /dev/net/tun ]
+    networks:
+      sbi-v: { ipv4_address: 172.30.2.7 }
+      ran: { ipv4_address: 172.30.4.8 }
+  pcf-v:
+    <<: *nf
+    profiles: [ vplmn ]
+    command: [ open5gs-pcfd, -c, *v ]
+    networks: { sbi-v: { ipv4_address: 172.30.2.13, aliases: [ pcf.5gc.mnc001.mcc001.3gppnetwork.org ] } }
+  nssf-v:
+    <<: *nf
+    profiles: [ vplmn ]
+    command: [ open5gs-nssfd, -c, *v ]
+    networks: { sbi-v: { ipv4_address: 172.30.2.14, aliases: [ nssf.5gc.mnc001.mcc001.3gppnetwork.org ] } }
+  udr-v:
+    <<: *nf
+    profiles: [ vplmn ]
+    command: [ open5gs-udrd, -c, *v ]
+    networks: { sbi-v: { ipv4_address: 172.30.2.20, aliases: [ udr.5gc.mnc001.mcc001.3gppnetwork.org ] } }
+
+  gnb-v:
+    <<: *ran
+    profiles: [ vplmn ]
+    command: [ nr-gnb, -c, /etc/ueransim/gnb-v.yaml ]
+    networks: { ran: { ipv4_address: 172.30.4.22 } }
+  ue-v:
+    <<: *ran
+    profiles: [ vplmn ]
+    command: [ nr-ue, -c, /etc/ueransim/ue-v.yaml ]
+    cap_add: [ NET_ADMIN ]
+    devices: [ /dev/net/tun ]
+    networks: { ran: { ipv4_address: 172.30.4.32 } }
+
+  # the inter-plmn-hr-n2 test binary (from the build image) as two
+  # simulated gNBs (N2 to both AMFs, N3 at .50/.51) and one UE doing the N2 HO 999-70 -> 001-01:
+  #   docker compose -p open5gs-hr --profile vplmn --profile ho run --rm ho-test
+  ho-test:
+    <<: *nf
+    profiles: [ ho ]
+    restart: "no"
+    cpus: 2
+    cap_add: [ NET_ADMIN ]
+    environment: { TEST_GNB1_ADDR: 172.30.4.50, TEST_GNB2_ADDR: 172.30.4.51, TEST_HR_MRU: "1", MALLOC_PERTURB_: "0" }
+    networks:
+      ran: { ipv4_address: 172.30.4.50 }
+      sbi-h: { ipv4_address: 172.30.1.50 }   # mongodb-h (the test writes its subscriber)
+    command:
+      - sh
+      - -c
+      - |
+        ip addr add 172.30.4.51/24 dev $$(ip -o -4 addr show | awk '/172.30.4.50/ {print $$2}')
+        exec /open5gs/build/tests/transfer/inter-plmn-hr-n2 -c /etc/open5gs-hr/ho-test.yaml "$$@"
+      - ho-test
+
+  # one-shot tools: docker compose run --rm dbctl open5gs-dbctl ...
+  dbctl:
+    image: ${USER:-open5gs}/${DIST:-ubuntu}-${TAG:-noble}-open5gs-build
+    profiles: [ tools ]
+    environment:
+      DB_URI: "mongodb://mongodb-h/open5gs"
+      PATH: "/open5gs/build/misc/db:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    networks: [ sbi-h, sbi-v ]

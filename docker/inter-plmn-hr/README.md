@@ -1,0 +1,160 @@
+# Two-PLMN home-routed Open5GS deployment
+
+Docker Compose deployment of this branch as two 5G cores, HPLMN 999-70 (the UEs' home) and
+VPLMN 001-01, joined by SEPPs over N32 and by a home-routed N9 user plane. It exercises
+home-routed roaming and the inter-PLMN N2 handover with N14 context transfer.
+
+Images follow the upstream blueprints: `docker/ubuntu/noble/base` + `docker/build` (all NFs
+and the `inter-plmn-hr-n2` test binary run from the build image), plus a UERANSIM image.
+Configs start from `configs/examples/5gc-sepp1-999-70.yaml.in` / `5gc-sepp2-001-01.yaml.in`
+and `configs/inter-plmn-hr-n2.yaml.in`.
+
+## Topology
+
+```
+          HPLMN 999-70 (net sbi-h 172.30.1.0/24)              VPLMN 001-01 (net sbi-v 172.30.2.0/24)
+ mongodb-h  UDR-h  PCF-h  BSF-h  UDM-h  AUSF-h  NSSF-h            NSSF-v  PCF-v  UDR-v  mongodb-v
+                        |                                                |
+            NRF-h --- SCP-h --- SEPP-h ====== N32-c/f (ipx) ====== SEPP-v --- SCP-v --- NRF-v
+                        |        172.30.3.10   172.30.3.0/24   172.30.3.20     |
+                      AMF-h ------------ N14 (SCP/SEPP/N32) ------------ AMF-v
+                      SMF-h ------------ N16a HR (SCP/SEPP/N32) -------- SMF-v
+                        | N4                                             | N4
+                      UPF-h (PSA, ogstun 10.45.0.0/16) <==== N9 ====== UPF-v (ogstun 10.46/16, unused)
+                        ^ N3                                             ^ N3
+              (net ran 172.30.4.0/24: NGAP to both AMFs, N3 + N9 GTP-U on both UPFs)
+              gnb-h 999-70 TAC 1 --> AMF-h                    gnb-v 001-01 TAC 2 --> AMF-v
+              ue-h  (UERANSIM)                                ue-v (UERANSIM, roaming)
+```
+
+Every SBI server binds to its 3GPP FQDN (`<nf>.5gc.mnc070.mcc999.3gppnetwork.org`,
+`<nf>.5gc.mnc001.mcc001.3gppnetwork.org`), which is a Docker network alias on its PLMN's SBI
+network. The SCP forwards a request to its SEPP when the target FQDN's PLMN is not its own,
+so every cross-PLMN request crosses N32 (TS 29.500 §6.10, TS 23.003 §28.3.2.3); plain IPs
+would bypass the SEPPs. Each PLMN has its own NRF with `serving:` set to that PLMN, from
+which its NFs learn their serving PLMN. SBI uses http on port 80 (FQDN without port).
+
+N9 rides the `ran` network, not `ipx`. An Open5GS UPF
+advertises one GTP-U address per source interface, and at the H-UPF both N3 (pre-HO) and N9
+(from the V-UPF) are on the access side, so a separate N9 address would need per-peer
+routing in the UPF.
+
+## Networks and addresses
+
+| Container | sbi-h | sbi-v | ipx | ran | Notes |
+|---|---|---|---|---|---|
+| mongodb-h | .100 | | | | HPLMN subscriber DB (`mongodb://mongodb-h/open5gs`) |
+| nrf-h / scp-h / sepp-h | .10 / .200 / .250 | | sepp-h .10 | | N32-c :7777, N32-f :7778 |
+| amf-h | .5 | | | .5 | NGAP :38412, GUAMI 999-70/2/1/31, TAI 999-70/1 |
+| smf-h | .4 | | | | UE pool 10.45.0.0/16 |
+| upf-h | .7 (N4) | | | .7 (N3/N9) | ogstun 10.45.0.1/16 |
+| ausf-h udm-h pcf-h nssf-h bsf-h udr-h | .11 .12 .13 .14 .15 .20 | | | | |
+| mongodb-v | | .100 | | | V-PCF policy DB |
+| nrf-v / scp-v / sepp-v | | .10 / .200 / .250 | sepp-v .20 | | |
+| amf-v | | .5 | | .6 | GUAMI 001-01/2/1/30, TAI 001-01/2, `access_control` 999-70 |
+| smf-v | | .4 | | | |
+| upf-v | | .7 (N4) | | .8 (N3/N9) | ogstun 10.46.0.1/16 (placeholder, HR uses H pool) |
+| nssf-v pcf-v udr-v | | .14 .13 .20 | | | |
+| gnb-h / gnb-v | | | | .21 / .22 | UERANSIM, gNB IDs 0x1 / 0x2 (32 bit) |
+| ue-h / ue-v | | | | .31 / .32 | UERANSIM UEs imsi-999700000000002 / ...003 |
+| ho-test | .50 | | | .50 (+ .51) | `inter-plmn-hr-n2` test binary as gNB1/gNB2 + UE imsi-999700000000020 (profile `ho`) |
+
+All subnets are `172.30.{1,2,3,4}.0/24`. No host ports are published.
+
+## Build
+
+Run from this directory. `UERANSIM_SRC` points at a UERANSIM v3.2.8 source tree:
+
+```sh
+docker compose --profile images build base             # ubuntu:noble + build deps + mongosh
+NINJA_JOBS=4 docker compose --profile images build build   # meson build + install
+UERANSIM_SRC=/path/to/ueransim docker compose --profile images build ueransim
+```
+
+Image names follow `docker/docker-compose.yml`: `$USER/ubuntu-noble-open5gs-base`,
+`$USER/ubuntu-noble-open5gs-build`, plus `$USER/ueransim`. Use ubuntu noble: with debian
+bookworm's libcurl 7.88.1 every SCP-forwarded request fails with `Error in the HTTP2 framing
+layer`. Rebuild `build` after every source change, then `docker compose --profile vplmn up -d`
+recreates the NF containers, and `docker compose --profile vplmn restart gnb-h gnb-v ue-h ue-v`
+re-attaches the UERANSIM gNBs/UEs (they do not reconnect to a restarted AMF on their own).
+
+## Up / down
+
+```sh
+docker compose up -d                          # HPLMN + gnb-h + ue-h
+docker compose --profile vplmn up -d          # + VPLMN + gnb-v + ue-v
+scripts/provision.sh                          # subscribers (needs mongodb-h, and mongodb-v if up)
+scripts/restart-ran.sh                        # after NF containers were recreated
+docker compose --profile vplmn ps
+docker compose logs -f amf-h sepp-h           # NF logs go to stdout
+docker compose --profile vplmn stop           # stop, keep containers
+docker compose --profile vplmn --profile ho down   # remove containers + networks
+```
+
+NFs start in any order: SBI clients retry until the SCP/NRF are up, and the PCF/UDR exit and
+are restarted (`restart: unless-stopped`) until mongo accepts connections, so give the core
+~20 s after `up` before starting UEs (or restart them).
+
+## Subscribers
+
+Subscribers live only in the HPLMN (`mongodb-h`, read by UDR-h). `scripts/provision.sh` adds
+imsi-999700000000001..005 and ...020 (the `inter-plmn-hr-n2` test UE) with the fork test UE's K `465b5ce8b199b49faa5f0a2ee238a6bc` and
+OPc `e8ed289deba952e4283b54e88e6183ca`, DNN `internet`, SST 1 (`open5gs-dbctl
+add_ue_with_apn`; the build image has `open5gs-dbctl` and `mongosh`). It removes each IMSI first,
+so it can be re-run.
+
+`scripts/provision.sh FILE` instead runs one `open5gs-dbctl` command per line of FILE in one
+container against mongodb-h. Use IMSIs starting with 99970 and DNN `internet` (the only DNN
+the SMFs serve). PCF-h takes policy from the UDR, so no `supi_range` needs to match.
+
+## Checks
+
+| Case | Command | Pass |
+|---|---|---|
+| HPLMN | `scripts/check-ue.sh ue-h` | `Initial Registration is successful`, `PDU Session establishment is successful`, `uesimtun0, 10.45.0.x`, ping 10.45.0.1 0 % loss |
+| HR roaming | `scripts/check-ue.sh ue-v` (UE 999-70 on gnb-v 001-01) | same as HPLMN, address from the H-SMF pool 10.45/16; `docker compose logs amf-v \| grep Home-Routed`; `docker compose logs sepp-v \| grep established` (N32-c) |
+| N2 HO 999-70 -> 001-01 | `scripts/ho-test.sh` | `SUCCESS` / `All tests passed.` (details below) |
+
+### Inter-PLMN N2 handover with the `inter-plmn-hr-n2` test binary
+
+UERANSIM has no N2 handover, so `scripts/ho-test.sh` runs this branch's test binary (service
+`ho-test`, profile `ho`, from the build image) against the compose: it is gNB1 (0x4000,
+999-70 TAC 1, N2 to amf-h) and gNB2 (0x4001, 001-01 TAC 2, N2 to amf-v) at 172.30.4.50, with
+N3 at .50/.51 (`TEST_GNB1_ADDR`/`TEST_GNB2_ADDR`), and UE imsi-999700000000020. Sequence:
+NG Setup x2, registration + PDU session on 999-70 (H-SMF/H-UPF), Handover Required to
+0x4001 / TAI 001-01-2, target AMF via N14 over the SEPPs, V-SMF/V-UPF insertion with
+RetrieveSMContext, Handover Request/Ack, Handover Command, RAN status transfer, Handover
+Notify, End Marker from the H-UPF on the old N3, source UE Context Release, ping through
+gNB2 -> V-UPF -> N9 -> H-UPF, then (`TEST_HR_MRU=1`, set in the compose) the Mobility
+Registration Update at amf-v (H-UDM registration and V-PCF AM policy over N32,
+Registration Accept/Complete, Configuration Update) and a second ping that must return a
+G-PDU, then release. `configs/ho-test.yaml` gives the binary the two AMFs' NGAP addresses,
+TAIs and PLMNs and mongodb-h; all `no_*` flags are set so it starts no NFs itself.
+
+The script restarts amf-v (and re-attaches gnb-v/ue-v) first: Open5GS's UDM does not send
+Nudm_UECM_DeregistrationNotify to the old AMF, so a previous run's UE context would stay
+in amf-v and the next CreateUEContext would be refused. A handover cancel case is not in
+the test binary.
+
+UERANSIM only selects a non-home PLMN that the network sent as an equivalent PLMN, and Open5GS
+sends none, so `ueransim/Dockerfile` drops that condition with a one-line `sed` (automatic
+network selection may pick any available non-forbidden PLMN, TS 23.122 §4.4.3.1.1).
+
+## Known issues and limits
+
+- The V-PCF reads the roamer's UE-AMBR from its own DB (`ogs_dbi_subscription_data` in
+  src/pcf/nudr-handler.c), so `scripts/provision.sh` copies the subscribers into mongodb-v.
+  A real VPLMN PCF would not hold home subscription data.
+- Open5GS's UDM sends no Nudm_UECM_DeregistrationNotify to an old AMF when the UE registers
+  elsewhere (TS 23.502 4.2.2.2.2 step 14), so stale UE contexts stay in the old AMF
+  (`scripts/ho-test.sh` restarts amf-v for that reason).
+- At handover the target AMF has no AM policy association yet and logs `No pcf_nf_instance`
+  (src/amf/nsmf-build.c) when it builds CreateSMContext; the association is created by the
+  Mobility Registration Update.
+- SCP-v logs `Cannot find client [type:UDM ...]` once when its cached H-UDM profile has
+  expired (30 s validity); it rediscovers and the request succeeds.
+- N9 GTP-U uses the `ran` network (both UPFs have one GTP-U address).
+- UERANSIM only selects a non-home PLMN listed as equivalent; `ueransim/Dockerfile` drops
+  that condition (see above). UERANSIM gNBs/UEs do not reconnect to restarted AMFs.
+- No handover cancel test; NTN -> TN (back to the HPLMN) handover is not implemented in the
+  branch.
