@@ -1150,6 +1150,9 @@ bool smf_nsmf_handle_update_sm_context(
         sess->nsmf_param.ue_timezone = true;
     }
 
+    if (SmContextUpdateData->rat_type)
+        sess->sbi_rat_type = SmContextUpdateData->rat_type;
+
     if (SmContextUpdateData->ng_ap_cause) {
         sess->nsmf_param.ngap_cause.group =
             SmContextUpdateData->ng_ap_cause->group;
@@ -2885,6 +2888,8 @@ bool smf_nsmf_handle_update_data_in_hsmf(
 
     sess->nsmf_param.an_type = HsmfUpdateData->an_type;
     sess->nsmf_param.rat_type = HsmfUpdateData->rat_type;
+    if (HsmfUpdateData->rat_type)
+        sess->sbi_rat_type = HsmfUpdateData->rat_type;
 
     servingNetwork = HsmfUpdateData->serving_network;
     if (servingNetwork && servingNetwork->mcc && servingNetwork->mnc)

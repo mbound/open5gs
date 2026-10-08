@@ -151,7 +151,9 @@ ogs_sbi_request_t *smf_npcf_smpolicycontrol_build_create(
         goto end;
     }
 
-    SmPolicyContextData.rat_type = OpenAPI_rat_type_NR;
+    /* TS 23.501 5.4.10: RAT Type as determined by the AMF */
+    SmPolicyContextData.rat_type =
+        sess->sbi_rat_type ? sess->sbi_rat_type : OpenAPI_rat_type_NR;
 
     SmPolicyContextData.serving_network =
         ogs_sbi_build_plmn_id_nid(&sess->serving_plmn_id);
