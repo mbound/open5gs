@@ -73,7 +73,7 @@ memb_NGAP_secondaryRATRestriction_constraint_1(const asn_TYPE_descriptor_t *td, 
 #if !defined(ASN_DISABLE_UPER_SUPPORT) || !defined(ASN_DISABLE_APER_SUPPORT)
 static asn_per_constraints_t asn_PER_memb_NGAP_primaryRATRestriction_constr_2 CC_NOTUSED = {
 	{ APC_UNCONSTRAINED,	-1, -1,  0,  0 },
-	{ APC_CONSTRAINED | APC_EXTENSIBLE,  4,  4,  8,  16 }	/* (SIZE(8..16,...)) */,
+	{ APC_CONSTRAINED | APC_EXTENSIBLE,  0,  0,  8,  8 }	/* (SIZE(8..8,...)): SIZE(8, ..., 16), root 8, extension 16 */,
 	0, 0	/* No PER value map */
 };
 #endif  /* !defined(ASN_DISABLE_UPER_SUPPORT) || !defined(ASN_DISABLE_APER_SUPPORT) */

@@ -141,6 +141,17 @@ cd ~/Documents/git/open5gs/lib/asn1c/ngap
     ../support/ngap-r19.2.0/38413-j20.asn
 ```
 
+asn1c turns `primaryRATRestriction BIT STRING (SIZE(8, ..., 16))` of
+ExtendedRATRestrictionInformation into the PER constraint SIZE(8..16,...),
+but the extension root is only 8 (X.680), so the length is not encoded and
+16 bits is an extension. After regenerating, restore the root in
+`asn_PER_memb_NGAP_primaryRATRestriction_constr_2`
+(NGAP_ExtendedRATRestrictionInformation.c):
+
+```c
+{ APC_CONSTRAINED | APC_EXTENSIBLE,  0,  0,  8,  8 }
+```
+
 Check common ASN.1 runtime file
 ===============================
 
