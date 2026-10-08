@@ -169,6 +169,7 @@ bool ogs_pdu_session_id_is_valid(int psi);
 #define OGS_OPERATOR_DETERMINED_BARRING_STRING "operator_determined_barring"
 #define OGS_NETWORK_ACCESS_MODE_STRING "network_access_mode"
 #define OGS_SUBSCRIBED_RAU_TAU_TIMER_STRING "subscribed_rau_tau_timer"
+#define OGS_RAT_RESTRICTIONS_STRING "rat_restrictions"
 
 #define OGS_SECURITY_STRING "security"
 #define OGS_K_STRING "k"
@@ -966,6 +967,14 @@ typedef struct ogs_subscription_data_s {
 
 #define OGS_RAU_TAU_DEFAULT_TIME                (12*60)     /* 12 min */
     uint32_t                subscribed_rau_tau_timer;       /* unit : seconds */
+
+    /*
+     * 5GS RAT restrictions (TS 23.501 5.3.4.1.1, TS 29.503 ratRestrictions)
+     * as TS 29.571 RatType strings, e.g. "NR_LEO".
+     */
+#define OGS_MAX_NUM_OF_RAT_RESTRICTION                          8
+    int num_of_rat_restriction;
+    char *rat_restriction[OGS_MAX_NUM_OF_RAT_RESTRICTION];
 
     int num_of_slice;
     ogs_slice_data_t slice[OGS_MAX_NUM_OF_SLICE];

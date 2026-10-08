@@ -105,7 +105,9 @@ const Subscriber = new Schema({
   subscribed_rau_tau_timer: {
     $type: Number,
     default: 12 // minites
-  }
+  },
+
+  rat_restrictions: [ String ] // 5GS RAT restrictions (TS 29.571 RatType)
 
 }, { typeKey: '$type' });
 

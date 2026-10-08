@@ -27,6 +27,7 @@ display_help() {
     echo "   ambr_speed {imsi dl_value dl_unit ul_value ul_unit}: Change AMBR speed from a specific user and the  unit values are \"[0=bps 1=Kbps 2=Mbps 3=Gbps 4=Tbps ]\""
     echo "   subscriber_status {imsi subscriber_status_val={0,1} operator_determined_barring={0..8}}: Change TS 29.272 values for Subscriber-Status (7.3.29) and Operator-Determined-Barring (7.3.30)"
     echo "   lbo_roaming_allowed {imsi lbo_roaming_allowed={0,1}}: Change roaming type for a specific subscriber: 0 = LBO roaming (default), 1 = HR roaming"
+    echo "   rat_restrictions {imsi [rat_type ...]}: Set the 5GS RAT restrictions (TS 29.571 RatType, e.g. NR_LEO NR_MEO NR_GEO NR_OTHER_SAT) of a specific subscriber; no rat_type clears them"
 
 }
 
@@ -817,6 +818,31 @@ if [ "$1" = "lbo_roaming_allowed" ]; then
         exit $?
     fi
     echo "open5gs-dbctl: incorrect number of args, format is \"open5gs-dbctl lbo_roaming_allowed imsi lbo_roaming_allowed={0,1}"
+    exit 1
+fi
+if [ "$1" = "rat_restrictions" ]; then
+    if [ "$#" -ge 2 ]; then
+        IMSI=$2
+        shift 2
+        RAT_LIST=""
+        for RAT in "$@"; do
+            case "$RAT" in
+                NR|EUTRA|WLAN|VIRTUAL|NBIOT|WIRELINE|WIRELINE_CABLE|WIRELINE_BBF|LTE-M|NR_U|EUTRA_U|TRUSTED_N3GA|TRUSTED_WLAN|UTRA|GERA|NR_LEO|NR_MEO|NR_GEO|NR_OTHER_SAT|NR_REDCAP|NR_EREDCAP)
+                    RAT_LIST="$RAT_LIST${RAT_LIST:+, }\"$RAT\""
+                    ;;
+                *)
+                    echo "open5gs-dbctl: unknown rat_type \"$RAT\""
+                    exit 1
+                    ;;
+            esac
+        done
+        mongosh --eval "db.subscribers.updateOne({ \"imsi\": \"$IMSI\"},
+            {\$set: { \"rat_restrictions\": [ $RAT_LIST ]
+                    }
+            });" $DB_URI
+        exit $?
+    fi
+    echo "open5gs-dbctl: incorrect number of args, format is \"open5gs-dbctl rat_restrictions imsi [rat_type ...]\""
     exit 1
 fi
 if [ "$1" = "showall" ]; then

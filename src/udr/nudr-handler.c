@@ -505,6 +505,7 @@ bool udr_nudr_dr_handle_subscription_provisioned(
     OpenAPI_list_t *DefaultSingleNssaiList = NULL;
     OpenAPI_list_t *SingleNssaiList = NULL;
     OpenAPI_nssai_t NSSAI;
+    OpenAPI_list_t *RatRestrictionList = NULL;
     OpenAPI_snssai_t *Snssai = NULL;
 
     OpenAPI_list_t *SubscribedSnssaiInfoList = NULL;
@@ -642,6 +643,7 @@ bool udr_nudr_dr_handle_subscription_provisioned(
         bool processGpsi = false;
         bool processUeAmbr = false;
         bool processNssai = false;
+        bool processRatRestrictions = false;
 
         /* Apply filtering based on fields query parameter */
         if (recvmsg->param.num_of_fields) {
@@ -665,6 +667,7 @@ bool udr_nudr_dr_handle_subscription_provisioned(
             processGpsi = true;
             processUeAmbr = true;
             processNssai = true;
+            processRatRestrictions = true;
         }
 
         /*
@@ -754,6 +757,23 @@ bool udr_nudr_dr_handle_subscription_provisioned(
 
             if (DefaultSingleNssaiList->count)
                 AccessAndMobilitySubscriptionData.nssai = &NSSAI;
+        }
+
+        if (processRatRestrictions) {
+            RatRestrictionList = OpenAPI_list_create();
+            for (i = 0; i < subscription_data.num_of_rat_restriction; i++) {
+                OpenAPI_rat_type_e rat = OpenAPI_rat_type_FromString(
+                        subscription_data.rat_restriction[i]);
+                if (rat == OpenAPI_rat_type_NULL) {
+                    ogs_error("[%s] Unknown RAT restriction [%s]", supi,
+                            subscription_data.rat_restriction[i]);
+                    continue;
+                }
+                OpenAPI_list_add(RatRestrictionList, (void *)rat);
+            }
+            if (RatRestrictionList->count)
+                AccessAndMobilitySubscriptionData.rat_restrictions =
+                    RatRestrictionList;
         }
 
         if (!returnProvisionedData) {
@@ -1191,6 +1211,7 @@ bool udr_nudr_dr_handle_subscription_provisioned(
             }
         }
         OpenAPI_list_free(SingleNssaiList);
+        OpenAPI_list_free(RatRestrictionList);
     }
     if (processSmfSel) {
         OpenAPI_lnode_t *node = NULL, *node2 = NULL;

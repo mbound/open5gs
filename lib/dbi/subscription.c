@@ -412,6 +412,22 @@ int ogs_dbi_subscription_data(char *supi,
             BSON_ITER_HOLDS_INT32(&iter)) {
             subscription_data->subscribed_rau_tau_timer =
                 bson_iter_int32(&iter);
+        } else if (!strcmp(key, OGS_RAT_RESTRICTIONS_STRING) &&
+            BSON_ITER_HOLDS_ARRAY(&iter)) {
+            bson_iter_recurse(&iter, &child1_iter);
+            while (bson_iter_next(&child1_iter)) {
+                if (!BSON_ITER_HOLDS_UTF8(&child1_iter))
+                    continue;
+                if (subscription_data->num_of_rat_restriction >=
+                        OGS_MAX_NUM_OF_RAT_RESTRICTION) {
+                    ogs_error("[%s] Too many RAT restrictions", supi);
+                    break;
+                }
+                utf8 = bson_iter_utf8(&child1_iter, &length);
+                subscription_data->rat_restriction[
+                    subscription_data->num_of_rat_restriction++] =
+                        ogs_strndup(utf8, length);
+            }
         } else if (!strcmp(key, OGS_AMBR_STRING) &&
                 BSON_ITER_HOLDS_DOCUMENT(&iter)) {
             bson_iter_recurse(&iter, &child1_iter);
