@@ -34,6 +34,39 @@ static ogs_pkbuf_t *testngap_build_handover_required_transfer(
 static ogs_pkbuf_t *testngap_build_handover_request_ack_transfer(
         test_sess_t *sess);
 
+/* TS 38.413 9.3.1.125 RAT Information in a Supported TA Item */
+static void testngap_add_rat_information(
+        NGAP_SupportedTAItem_t *SupportedTAItem, long rat_information)
+{
+    NGAP_ProtocolExtensionContainer_14713P401_t *extContainer = NULL;
+    NGAP_SupportedTAItem_ExtIEs_t *extIe = NULL;
+    NGAP_RAT_Information_t *RAT_Information = NULL;
+
+    extContainer = CALLOC(1, sizeof(*extContainer));
+    ogs_assert(extContainer);
+    SupportedTAItem->iE_Extensions =
+        (struct NGAP_ProtocolExtensionContainer *)extContainer;
+
+    extIe = CALLOC(1, sizeof(*extIe));
+    ogs_assert(extIe);
+    ASN_SEQUENCE_ADD(&extContainer->list, extIe);
+
+    extIe->id = NGAP_ProtocolIE_ID_id_RAT_Information;
+    extIe->criticality = NGAP_Criticality_reject;
+    extIe->extensionValue.present =
+        NGAP_SupportedTAItem_ExtIEs__extensionValue_PR_RAT_Information;
+
+    RAT_Information = CALLOC(1, sizeof(*RAT_Information));
+    ogs_assert(RAT_Information);
+    extIe->extensionValue.choice.RAT_Information = RAT_Information;
+
+    *RAT_Information = rat_information;
+}
+
+static ogs_pkbuf_t *testngap_build_ng_setup_request_internal(
+        uint32_t gnb_id, uint8_t bitsize, int tai_index, int plmn_index,
+        long rat_information);
+
 ogs_pkbuf_t *testngap_build_ng_setup_request(
         uint32_t gnb_id, uint8_t bitsize)
 {
@@ -49,6 +82,22 @@ ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai(
 
 ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai_plmn(
         uint32_t gnb_id, uint8_t bitsize, int tai_index, int plmn_index)
+{
+    return testngap_build_ng_setup_request_internal(
+            gnb_id, bitsize, tai_index, plmn_index, -1);
+}
+
+/* Every Supported TA carries the given RAT Information */
+ogs_pkbuf_t *testngap_build_ng_setup_request_rat_information(
+        uint32_t gnb_id, uint8_t bitsize, long rat_information)
+{
+    return testngap_build_ng_setup_request_internal(
+            gnb_id, bitsize, 0, 0, rat_information);
+}
+
+static ogs_pkbuf_t *testngap_build_ng_setup_request_internal(
+        uint32_t gnb_id, uint8_t bitsize, int tai_index, int plmn_index,
+        long rat_information)
 {
     ogs_pkbuf_t *pkbuf = NULL;
 
@@ -183,6 +232,9 @@ ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai_plmn(
         else
             ogs_assert_if_reached();
 
+        if (rat_information >= 0)
+            testngap_add_rat_information(SupportedTAItem, rat_information);
+
         for (j = 0; j < test_self()->num_of_plmn_support; j++) {
             plmn_id = &test_self()->plmn_support[j].plmn_id;
 
@@ -232,7 +284,25 @@ ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai_plmn(
     return ogs_ngap_encode(&pdu);
 }
 
+static ogs_pkbuf_t *testngap_build_ran_configuration_update_internal(
+        bool supported_ta_list, long rat_information);
+
 ogs_pkbuf_t *testngap_build_ran_configuration_update(bool supported_ta_list)
+{
+    return testngap_build_ran_configuration_update_internal(
+            supported_ta_list, -1);
+}
+
+/* Supported TA List where every TA carries the given RAT Information */
+ogs_pkbuf_t *testngap_build_ran_configuration_update_rat_information(
+        long rat_information)
+{
+    return testngap_build_ran_configuration_update_internal(
+            true, rat_information);
+}
+
+static ogs_pkbuf_t *testngap_build_ran_configuration_update_internal(
+        bool supported_ta_list, long rat_information)
 {
     ogs_pkbuf_t *pkbuf = NULL;
     int i, j, k, num;
@@ -309,6 +379,9 @@ ogs_pkbuf_t *testngap_build_ran_configuration_update(bool supported_ta_list)
                         &SupportedTAItem->tAC);
             else
                 ogs_assert_if_reached();
+
+            if (rat_information >= 0)
+                testngap_add_rat_information(SupportedTAItem, rat_information);
 
             for (j = 0; j < test_self()->num_of_plmn_support; j++) {
                 plmn_id = &test_self()->plmn_support[j].plmn_id;

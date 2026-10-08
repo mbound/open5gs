@@ -29,7 +29,11 @@ ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai(
         uint32_t gnb_id, uint8_t bitsize, int tai_index);
 ogs_pkbuf_t *testngap_build_ng_setup_request_by_tai_plmn(
         uint32_t gnb_id, uint8_t bitsize, int tai_index, int plmn_index);
+ogs_pkbuf_t *testngap_build_ng_setup_request_rat_information(
+        uint32_t gnb_id, uint8_t bitsize, long rat_information);
 ogs_pkbuf_t *testngap_build_ran_configuration_update(bool supported_ta_list);
+ogs_pkbuf_t *testngap_build_ran_configuration_update_rat_information(
+        long rat_information);
 
 ogs_pkbuf_t *testngap_build_initial_ue_message(
         test_ue_t *test_ue, ogs_pkbuf_t *gmmbuf,
