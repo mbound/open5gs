@@ -32,13 +32,14 @@ the build cache; `NINJA_JOBS` caps the Open5GS build, default 4), runs
 ue-v. It ends with
 
 ```
-== images 1234 s, bring-up 60 s
+== images 614 s, bring-up 52 s
 == RESULT: ue-h:PASS ue-v:PASS
 ```
 
 and exits non-zero if a UE fails. `scripts/ho-test.sh` prints `SUCCESS` lines, `All tests
 passed.` and `ho-test rc=0`. The scripts work from any directory. Times on a 16-vCPU host
-with `NINJA_JOBS=4`: image build TIMES_BUILD, bring-up to PASS TIMES_UP, ho-test TIMES_HO.
+with `NINJA_JOBS=4`: image build about 10 min (once; later runs reuse the images), bring-up to PASS about
+1 min, ho-test about 20 s.
 
 ## Topology
 
