@@ -74,6 +74,152 @@ static void ngap_build_plmn_support_list(NGAP_PLMNSupportList_t *PLMNSupportList
     }
 }
 
+/*
+ * TS 38.413 9.3.1.85 Mobility Restriction List: RAT Restrictions for the
+ * Serving PLMN from the subscribed ratRestrictions (TS 23.501 5.3.4.1.1).
+ *
+ * Primary bits are those of RAT Restriction Information (9.3.1.85) and of
+ * Primary RAT Restriction in Extended RAT Restriction Information
+ * (9.3.1.126); secondary bits are Secondary RAT Restriction (9.3.1.126).
+ * A ratRestrictions entry restricts the RAT both as primary and as
+ * secondary RAT (TS 29.503 NOTE 2 of Table 6.1.6.2.4-1).
+ * Bit 0 is the first bit of the BIT STRING.
+ */
+#define MRL_BIT16(n) ((uint16_t)(0x8000 >> (n)))
+#define MRL_BIT8(n) ((uint8_t)(0x80 >> (n)))
+
+static uint32_t ngap_mrl_rat_restrictions(amf_ue_t *amf_ue)
+{
+    OpenAPI_lnode_t *node = NULL;
+    uint16_t primary = 0;
+    uint8_t secondary = 0;
+
+    ogs_assert(amf_ue);
+
+    OpenAPI_list_for_each(amf_ue->rat_restrictions, node) {
+        switch ((OpenAPI_rat_type_e)(intptr_t)node->data) {
+        case OpenAPI_rat_type_EUTRA:
+            primary |= MRL_BIT16(0); secondary |= MRL_BIT8(0); break;
+        case OpenAPI_rat_type_NR:
+            primary |= MRL_BIT16(1); secondary |= MRL_BIT8(1); break;
+        case OpenAPI_rat_type_NR_U:
+            primary |= MRL_BIT16(2); secondary |= MRL_BIT8(3); break;
+        case OpenAPI_rat_type_EUTRA_U:
+            secondary |= MRL_BIT8(2); break;
+        case OpenAPI_rat_type_NR_LEO: primary |= MRL_BIT16(3); break;
+        case OpenAPI_rat_type_NR_MEO: primary |= MRL_BIT16(4); break;
+        case OpenAPI_rat_type_NR_GEO: primary |= MRL_BIT16(5); break;
+        case OpenAPI_rat_type_NR_OTHER_SAT: primary |= MRL_BIT16(6); break;
+        case OpenAPI_rat_type_WB_E_UTRAN_LEO: primary |= MRL_BIT16(7); break;
+        case OpenAPI_rat_type_WB_E_UTRAN_MEO: primary |= MRL_BIT16(8); break;
+        case OpenAPI_rat_type_WB_E_UTRAN_GEO: primary |= MRL_BIT16(9); break;
+        case OpenAPI_rat_type_WB_E_UTRAN_OTHERSAT:
+            primary |= MRL_BIT16(10); break;
+        default:
+            /* Not a RAT of the NG-RAN Mobility Restriction List */
+            break;
+        }
+    }
+
+    return ((uint32_t)primary << 8) | secondary;
+}
+
+/*
+ * Serving PLMN (9.3.3.5) only: the AMF has no Equivalent PLMNs, Forbidden
+ * Area or Service Area Restriction data, so those parts are not included.
+ */
+static NGAP_MobilityRestrictionList_t *ngap_build_mobility_restriction_list(
+        ran_ue_t *ran_ue, amf_ue_t *amf_ue, ogs_plmn_id_t *serving_plmn_id)
+{
+    NGAP_MobilityRestrictionList_t *MobilityRestrictionList = NULL;
+    NGAP_RATRestrictions_Item_t *RATRestrictionsItem = NULL;
+    NGAP_ProtocolExtensionContainer_14713P360_t *extContainer = NULL;
+    NGAP_RATRestrictions_Item_ExtIEs_t *extIe = NULL;
+    NGAP_ExtendedRATRestrictionInformation_t *Extended = NULL;
+    uint32_t bits;
+    uint16_t primary;
+
+    ogs_assert(ran_ue);
+    ogs_assert(amf_ue);
+    ogs_assert(serving_plmn_id);
+
+    bits = ngap_mrl_rat_restrictions(amf_ue);
+    primary = bits >> 8;
+
+    MobilityRestrictionList = CALLOC(1, sizeof(*MobilityRestrictionList));
+    ogs_assert(MobilityRestrictionList);
+    ogs_asn_buffer_to_OCTET_STRING(serving_plmn_id, OGS_PLMN_ID_LEN,
+            &MobilityRestrictionList->servingPLMN);
+
+    ran_ue->mrl_rat_restrictions = bits;
+    if (!bits)
+        return MobilityRestrictionList;
+
+    MobilityRestrictionList->rATRestrictions =
+        CALLOC(1, sizeof(*MobilityRestrictionList->rATRestrictions));
+    ogs_assert(MobilityRestrictionList->rATRestrictions);
+
+    RATRestrictionsItem = CALLOC(1, sizeof(*RATRestrictionsItem));
+    ogs_assert(RATRestrictionsItem);
+    ASN_SEQUENCE_ADD(&MobilityRestrictionList->rATRestrictions->list,
+            RATRestrictionsItem);
+
+    ogs_asn_buffer_to_OCTET_STRING(serving_plmn_id, OGS_PLMN_ID_LEN,
+            &RATRestrictionsItem->pLMNIdentity);
+
+    /* RAT Restriction Information: bits 0-6, bit 7 reserved */
+    RATRestrictionsItem->rATRestrictionInformation.size = 1;
+    RATRestrictionsItem->rATRestrictionInformation.buf = CALLOC(1, 1);
+    ogs_assert(RATRestrictionsItem->rATRestrictionInformation.buf);
+    RATRestrictionsItem->rATRestrictionInformation.buf[0] =
+        (primary >> 8) & 0xfe;
+
+    /*
+     * Extended RAT Restriction Information only when RAT Restriction
+     * Information cannot carry the restrictions: E-UTRA satellite access
+     * (primary 7-10) or e-UTRA-unlicensed as secondary RAT (bit 2). The NR
+     * satellite RATs have bits in both. Some asn1c-generated NGAP codecs
+     * (e.g. UERANSIM v3.2.8) mis-decode primaryRATRestriction (SIZE(8, ...,
+     * 16)), so leaving the IE out when it adds nothing keeps them working.
+     */
+    if (!(primary & (MRL_BIT16(7) | MRL_BIT16(8) | MRL_BIT16(9) |
+                    MRL_BIT16(10))) && !((bits & 0xff) & MRL_BIT8(2)))
+        return MobilityRestrictionList;
+
+    extContainer = CALLOC(1, sizeof(*extContainer));
+    ogs_assert(extContainer);
+    RATRestrictionsItem->iE_Extensions =
+        (struct NGAP_ProtocolExtensionContainer *)extContainer;
+
+    extIe = CALLOC(1, sizeof(*extIe));
+    ogs_assert(extIe);
+    ASN_SEQUENCE_ADD(&extContainer->list, extIe);
+
+    extIe->id = NGAP_ProtocolIE_ID_id_ExtendedRATRestrictionInformation;
+    extIe->criticality = NGAP_Criticality_ignore;
+    extIe->extensionValue.present = NGAP_RATRestrictions_Item_ExtIEs__extensionValue_PR_ExtendedRATRestrictionInformation;
+
+    Extended = CALLOC(1, sizeof(*Extended));
+    ogs_assert(Extended);
+    extIe->extensionValue.choice.ExtendedRATRestrictionInformation = Extended;
+
+    /* Primary RAT Restriction: SIZE(8, ..., 16), 16 bits only for 7-10 */
+    Extended->primaryRATRestriction.size = (primary & 0x00ff) ? 2 : 1;
+    Extended->primaryRATRestriction.buf =
+        CALLOC(Extended->primaryRATRestriction.size, 1);
+    ogs_assert(Extended->primaryRATRestriction.buf);
+    Extended->primaryRATRestriction.buf[0] = primary >> 8;
+    if (Extended->primaryRATRestriction.size == 2)
+        Extended->primaryRATRestriction.buf[1] = primary & 0xff;
+
+    Extended->secondaryRATRestriction.size = 1;
+    Extended->secondaryRATRestriction.buf = CALLOC(1, 1);
+    ogs_assert(Extended->secondaryRATRestriction.buf);
+    Extended->secondaryRATRestriction.buf[0] = bits & 0xff;
+
+    return MobilityRestrictionList;
+}
+
 ogs_pkbuf_t *ngap_build_ng_setup_response(void)
 {
     int i;
@@ -598,6 +744,19 @@ ogs_pkbuf_t *ngap_build_downlink_nas_transport(
         }
     }
 
+    /* TS 38.413 9.3.1.85, TS 23.501 5.3.4.1.1 */
+    if (ngap_mrl_rat_restrictions(amf_ue) != ran_ue->mrl_rat_restrictions) {
+        ie = CALLOC(1, sizeof(NGAP_DownlinkNASTransport_IEs_t));
+        ogs_assert(ie);
+        ASN_SEQUENCE_ADD(DownlinkNASTransport->protocolIEs, ie);
+
+        ie->id = NGAP_ProtocolIE_ID_id_MobilityRestrictionList;
+        ie->criticality = NGAP_Criticality_ignore;
+        ie->value.present = NGAP_DownlinkNASTransport_IEs__value_PR_MobilityRestrictionList;
+        ie->value.choice.MobilityRestrictionList =
+            ngap_build_mobility_restriction_list(ran_ue, amf_ue, &amf_ue->nr_tai.plmn_id);
+    }
+
     return ogs_ngap_encode(&pdu);
 }
 
@@ -959,6 +1118,19 @@ ogs_pkbuf_t *ngap_ue_build_initial_context_setup_request(
         NAS_PDU->buf = CALLOC(NAS_PDU->size, sizeof(uint8_t));
         memcpy(NAS_PDU->buf, gmmbuf->data, NAS_PDU->size);
         ogs_pkbuf_free(gmmbuf);
+    }
+
+    /* TS 38.413 9.3.1.85, TS 23.501 5.3.4.1.1 */
+    if (ngap_mrl_rat_restrictions(amf_ue)) {
+        ie = CALLOC(1, sizeof(NGAP_InitialContextSetupRequestIEs_t));
+        ogs_assert(ie);
+        ASN_SEQUENCE_ADD(InitialContextSetupRequest->protocolIEs, ie);
+
+        ie->id = NGAP_ProtocolIE_ID_id_MobilityRestrictionList;
+        ie->criticality = NGAP_Criticality_ignore;
+        ie->value.present = NGAP_InitialContextSetupRequestIEs__value_PR_MobilityRestrictionList;
+        ie->value.choice.MobilityRestrictionList =
+            ngap_build_mobility_restriction_list(ran_ue, amf_ue, &amf_ue->nr_tai.plmn_id);
     }
 
     return ogs_ngap_encode(&pdu);
@@ -1467,6 +1639,19 @@ ogs_pkbuf_t *ngap_sess_build_initial_context_setup_request(
         MaskedIMEISV->buf = CALLOC(MaskedIMEISV->size, sizeof(uint8_t));
         MaskedIMEISV->bits_unused = 0;
         memcpy(MaskedIMEISV->buf, amf_ue->masked_imeisv, MaskedIMEISV->size);
+    }
+
+    /* TS 38.413 9.3.1.85, TS 23.501 5.3.4.1.1 */
+    if (ngap_mrl_rat_restrictions(amf_ue)) {
+        ie = CALLOC(1, sizeof(NGAP_InitialContextSetupRequestIEs_t));
+        ogs_assert(ie);
+        ASN_SEQUENCE_ADD(InitialContextSetupRequest->protocolIEs, ie);
+
+        ie->id = NGAP_ProtocolIE_ID_id_MobilityRestrictionList;
+        ie->criticality = NGAP_Criticality_ignore;
+        ie->value.present = NGAP_InitialContextSetupRequestIEs__value_PR_MobilityRestrictionList;
+        ie->value.choice.MobilityRestrictionList =
+            ngap_build_mobility_restriction_list(ran_ue, amf_ue, &amf_ue->nr_tai.plmn_id);
     }
 
     return ogs_ngap_encode(&pdu);
@@ -3027,6 +3212,20 @@ ogs_pkbuf_t *ngap_build_handover_request(ran_ue_t *target_ue)
             &GUAMI->aMFSetID);
     ogs_ngap_uint8_to_AMFPointer(ogs_amf_pointer(&amf_ue->guami->amf_id),
             &GUAMI->aMFPointer);
+
+    /* TS 38.413 9.3.1.85, TS 23.501 5.3.4.1.1 */
+    if (ngap_mrl_rat_restrictions(amf_ue)) {
+        ie = CALLOC(1, sizeof(NGAP_HandoverRequestIEs_t));
+        ogs_assert(ie);
+        ASN_SEQUENCE_ADD(HandoverRequest->protocolIEs, ie);
+
+        ie->id = NGAP_ProtocolIE_ID_id_MobilityRestrictionList;
+        ie->criticality = NGAP_Criticality_ignore;
+        ie->value.present = NGAP_HandoverRequestIEs__value_PR_MobilityRestrictionList;
+        ie->value.choice.MobilityRestrictionList =
+            ngap_build_mobility_restriction_list(target_ue, amf_ue, ogs_plmn_id_hexdump(&target_ue->saved.nr_tai.plmn_id) ?
+                &target_ue->saved.nr_tai.plmn_id : &amf_ue->nr_tai.plmn_id);
+    }
 
     return ogs_ngap_encode(&pdu);
 }

@@ -218,6 +218,13 @@ struct ran_ue_s {
     bool            initial_context_setup_response_received;
     bool            ue_ambr_sent;
 
+    /*
+     * RAT restriction bits last sent to this NG-RAN node in a Mobility
+     * Restriction List (primary << 8 | secondary, see ngap-build.c), 0 if
+     * none. A Downlink NAS Transport carries the list only when it differs.
+     */
+    uint32_t        mrl_rat_restrictions;
+
     /* Handover Info */
     ogs_pool_id_t   source_ue_id;
     ogs_pool_id_t   target_ue_id;
