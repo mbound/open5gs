@@ -24,6 +24,51 @@
 #include "namf-handler.h"
 #include "nas-path.h"
 
+/* TS 38.413 9.3.1.125 RAT Information of a Supported TA Item */
+static OpenAPI_rat_type_e ngap_supported_ta_rat_type(
+        NGAP_SupportedTAItem_t *SupportedTAItem)
+{
+    int i;
+    NGAP_ProtocolExtensionContainer_14713P401_t *extensions = NULL;
+
+    ogs_assert(SupportedTAItem);
+
+    extensions = (NGAP_ProtocolExtensionContainer_14713P401_t *)
+        SupportedTAItem->iE_Extensions;
+
+    for (i = 0; extensions && i < OGS_ASN_LIST_COUNT(extensions); i++) {
+        NGAP_SupportedTAItem_ExtIEs_t *ext =
+            (NGAP_SupportedTAItem_ExtIEs_t *)OGS_ASN_LIST_GET(extensions, i);
+
+        if (!ext || ext->id != NGAP_ProtocolIE_ID_id_RAT_Information ||
+            ext->extensionValue.present !=
+                NGAP_SupportedTAItem_ExtIEs__extensionValue_PR_RAT_Information ||
+            !ext->extensionValue.choice.RAT_Information)
+            continue;
+
+        switch (*ext->extensionValue.choice.RAT_Information) {
+        case NGAP_RAT_Information_unlicensed:
+            return OpenAPI_rat_type_NR_U;
+        case NGAP_RAT_Information_nb_IoT:
+            return OpenAPI_rat_type_NBIOT;
+        case NGAP_RAT_Information_nR_LEO:
+            return OpenAPI_rat_type_NR_LEO;
+        case NGAP_RAT_Information_nR_MEO:
+            return OpenAPI_rat_type_NR_MEO;
+        case NGAP_RAT_Information_nR_GEO:
+            return OpenAPI_rat_type_NR_GEO;
+        case NGAP_RAT_Information_nR_OTHERSAT:
+            return OpenAPI_rat_type_NR_OTHER_SAT;
+        default:
+            ogs_warn("Unknown RAT Information [%ld]",
+                    *ext->extensionValue.choice.RAT_Information);
+            break;
+        }
+    }
+
+    return OpenAPI_rat_type_NR;
+}
+
 static void ngap_store_nr_ntn_tai_information(
         NGAP_UserLocationInformationNR_t *location, ran_ue_t *ran_ue)
 {
@@ -531,8 +576,11 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
 
         ogs_asn_OCTET_STRING_to_uint24(&SupportedTAItem->tAC,
             &gnb->supported_ta_list[i].tac);
+        gnb->supported_ta_list[i].rat_type =
+            ngap_supported_ta_rat_type(SupportedTAItem);
 
-        ogs_debug("    TAC[%d]", gnb->supported_ta_list[i].tac.v);
+        ogs_debug("    TAC[%d] RAT[%s]", gnb->supported_ta_list[i].tac.v,
+                OpenAPI_rat_type_ToString(gnb->supported_ta_list[i].rat_type));
 
         for (j = 0, gnb->supported_ta_list[i].num_of_bplmn_list = 0;
                 j < OGS_ASN_LIST_COUNT(SupportedTAItem->broadcastPLMNList) &&
@@ -5364,8 +5412,12 @@ void ngap_handle_ran_configuration_update(
 
             ogs_asn_OCTET_STRING_to_uint24(&SupportedTAItem->tAC,
                 &gnb->supported_ta_list[i].tac);
+            gnb->supported_ta_list[i].rat_type =
+                ngap_supported_ta_rat_type(SupportedTAItem);
 
-            ogs_debug("    TAC[%d]", gnb->supported_ta_list[i].tac.v);
+            ogs_debug("    TAC[%d] RAT[%s]", gnb->supported_ta_list[i].tac.v,
+                    OpenAPI_rat_type_ToString(
+                        gnb->supported_ta_list[i].rat_type));
 
             for (j = 0, gnb->supported_ta_list[i].num_of_bplmn_list = 0;
                     j < OGS_ASN_LIST_COUNT(SupportedTAItem->broadcastPLMNList) &&

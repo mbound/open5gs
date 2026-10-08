@@ -366,7 +366,7 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_request(amf_ue_t *amf_ue,
 
     if (amf_ue_is_rat_restricted(amf_ue)) {
         ogs_error("Registration rejected due to RAT restrictions");
-        return OGS_5GMM_CAUSE_5GS_SERVICES_NOT_ALLOWED;
+        return amf_ue_rat_restriction_gmm_cause(amf_ue);
     }
 
     return OGS_5GMM_CAUSE_REQUEST_ACCEPTED;
@@ -770,6 +770,12 @@ ogs_nas_5gmm_cause_t gmm_handle_service_request(amf_ue_t *amf_ue,
         return OGS_5GMM_CAUSE_TRACKING_AREA_NOT_ALLOWED;
     }
     ogs_debug("    SERVED_TAI_INDEX[%d]", served_tai_index);
+
+    /* TS 23.501 5.3.4.1.1: no access in a restricted RAT */
+    if (amf_ue_is_rat_restricted(amf_ue)) {
+        ogs_error("Service request rejected due to RAT restrictions");
+        return amf_ue_rat_restriction_gmm_cause(amf_ue);
+    }
 
     ogs_info("[%s]    5G-S_GUTI[AMF_ID:0x%x,M_TMSI:0x%x]",
         AMF_UE_HAVE_SUCI(amf_ue) ? amf_ue->suci : "Unknown ID",

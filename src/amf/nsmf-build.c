@@ -554,6 +554,9 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_update_sm_context(
                 ogs_sbi_gmtime_string(amf_ue->ue_location_timestamp);
 
         SmContextUpdateData.ue_location = &ueLocation;
+
+        /* TS 29.502: RAT Type of the (new) serving TA, e.g. after handover */
+        SmContextUpdateData.rat_type = amf_ue_rat_type(amf_ue);
     }
     if (param->ue_timezone) {
         SmContextUpdateData.ue_time_zone =

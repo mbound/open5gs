@@ -197,7 +197,7 @@ static int amf_nudm_sdm_handle_provisioned_internal(
             ogs_error("Registration rejected due to RAT restrictions");
             r = nas_5gs_send_gmm_reject(
                     ran_ue_find_by_id(amf_ue->ran_ue_id), amf_ue,
-                    OGS_5GMM_CAUSE_5GS_SERVICES_NOT_ALLOWED);
+                    amf_ue_rat_restriction_gmm_cause(amf_ue));
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;

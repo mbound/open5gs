@@ -178,6 +178,8 @@ typedef struct amf_gnb_s {
     int             num_of_supported_ta_list;
     struct {
         ogs_uint24_t tac;
+        /* TS 38.413 RAT Information, NR if absent */
+        OpenAPI_rat_type_e rat_type;
         int num_of_bplmn_list;
         struct {
             ogs_plmn_id_t plmn_id;
@@ -185,8 +187,6 @@ typedef struct amf_gnb_s {
             ogs_s_nssai_t s_nssai[OGS_MAX_NUM_OF_SLICE_SUPPORT];
         } bplmn_list[OGS_MAX_NUM_OF_BPLMN];
     } supported_ta_list[OGS_MAX_NUM_OF_SUPPORTED_TA];
-
-    OpenAPI_rat_type_e rat_type;
 
     ogs_pkbuf_t     *ng_reset_ack; /* Reset message */
 
@@ -1288,6 +1288,7 @@ void amf_clear_subscribed_info(amf_ue_t *amf_ue);
 
 bool amf_update_allowed_nssai(amf_ue_t *amf_ue);
 bool amf_ue_is_rat_restricted(amf_ue_t *amf_ue);
+ogs_nas_5gmm_cause_t amf_ue_rat_restriction_gmm_cause(amf_ue_t *amf_ue);
 int amf_instance_get_load(void);
 void amf_ue_save_to_release_session_list(amf_ue_t *amf_ue);
 

@@ -1301,9 +1301,6 @@ amf_gnb_t *amf_gnb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
         return NULL;
     }
 
-    /* Defaut RAT-Type */
-    gnb->rat_type = OpenAPI_rat_type_NR;
-
     gnb->sctp.sock = sock;
     gnb->sctp.addr = addr;
     gnb->sctp.type = amf_gnb_sock_type(gnb->sctp.sock);
@@ -2465,10 +2462,17 @@ void amf_ue_set_supi(amf_ue_t *amf_ue, char *supi)
     ogs_hash_set(self.supi_hash, amf_ue->supi, strlen(amf_ue->supi), amf_ue);
 }
 
+/*
+ * TS 23.501 5.4.10: the AMF determines the RAT Type from the RAT Information
+ * the NG-RAN signalled per Supported TA (TS 38.413 9.3.1.125). The serving
+ * TA is the TAI of its current NG association; a TA without RAT Information
+ * is terrestrial NR.
+ */
 OpenAPI_rat_type_e amf_ue_rat_type(amf_ue_t *amf_ue)
 {
     amf_gnb_t *gnb = NULL;
     ran_ue_t *ran_ue = NULL;
+    int i;
 
     ran_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
     if (!ran_ue) {
@@ -2482,7 +2486,13 @@ OpenAPI_rat_type_e amf_ue_rat_type(amf_ue_t *amf_ue)
         return OpenAPI_rat_type_NULL;
     }
 
-    return gnb->rat_type;
+    for (i = 0; i < gnb->num_of_supported_ta_list; i++) {
+        if (gnb->supported_ta_list[i].tac.v == ran_ue->saved.nr_tai.tac.v &&
+            gnb->supported_ta_list[i].rat_type)
+            return gnb->supported_ta_list[i].rat_type;
+    }
+
+    return OpenAPI_rat_type_NR;
 }
 
 void amf_ue_associate_ran_ue(amf_ue_t *amf_ue, ran_ue_t *ran_ue)
@@ -3412,6 +3422,27 @@ bool amf_ue_is_rat_restricted(amf_ue_t *amf_ue)
         }
     }
     return false;
+}
+
+/*
+ * 5GMM cause for a Registration Reject due to RAT restriction.
+ *
+ * NR satellite RAT Types are deployed in TAs of their own (TS 23.501 5.4.10),
+ * so a restricted satellite RAT is a TA the UE may not use by subscription
+ * while other TAs of the PLMN remain usable: #15 "No suitable cells in
+ * tracking area" (TS 24.501 Annex A.2). Other RATs keep #7.
+ */
+ogs_nas_5gmm_cause_t amf_ue_rat_restriction_gmm_cause(amf_ue_t *amf_ue)
+{
+    switch (amf_ue_rat_type(amf_ue)) {
+    case OpenAPI_rat_type_NR_LEO:
+    case OpenAPI_rat_type_NR_MEO:
+    case OpenAPI_rat_type_NR_GEO:
+    case OpenAPI_rat_type_NR_OTHER_SAT:
+        return OGS_5GMM_CAUSE_NO_SUITABLE_CELLS_IN_TRACKING_AREA;
+    default:
+        return OGS_5GMM_CAUSE_5GS_SERVICES_NOT_ALLOWED;
+    }
 }
 
 void amf_ue_save_to_release_session_list(amf_ue_t *amf_ue)
