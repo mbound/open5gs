@@ -9,6 +9,37 @@ and the `inter-plmn-hr-n2` test binary run from the build image), plus a UERANSI
 Configs start from `configs/examples/5gc-sepp1-999-70.yaml.in` / `5gc-sepp2-001-01.yaml.in`
 and `configs/inter-plmn-hr-n2.yaml.in`.
 
+## Quick start (from scratch)
+
+Prerequisites: a Linux Docker host with Docker Engine and the Compose v2 plugin
+(`docker compose`), about 15 GB free disk, the TUN device (`/dev/net/tun`, used by the UPFs
+and UEs), and internet access for the image builds (Ubuntu packages, meson subprojects,
+UERANSIM v3.2.8 from GitHub).
+
+```sh
+git clone -b inter-plmn-hr-n2-ho-fixes <this-repo-url> open5gs
+# or, from a local checkout: git -C /path/to/checkout archive --prefix=open5gs/ HEAD | tar -x
+cd open5gs/docker/inter-plmn-hr
+scripts/up.sh        # build images, start both PLMNs, provision, check ue-h and ue-v
+scripts/ho-test.sh   # inter-PLMN N2 handover 999-70 -> 001-01 with the test binary
+scripts/down.sh      # remove containers, networks, volumes (--rmi: also the images)
+```
+
+`scripts/up.sh` builds only the images that are missing (`REBUILD=1` rebuilds all without
+the build cache; `NINJA_JOBS` caps the Open5GS build, default 4), runs
+`docker compose --profile vplmn up -d`, waits for mongo and the NRF registrations, runs
+`scripts/provision.sh` and `scripts/restart-ran.sh`, then `scripts/check-ue.sh` for ue-h and
+ue-v. It ends with
+
+```
+== images 1234 s, bring-up 60 s
+== RESULT: ue-h:PASS ue-v:PASS
+```
+
+and exits non-zero if a UE fails. `scripts/ho-test.sh` prints `SUCCESS` lines, `All tests
+passed.` and `ho-test rc=0`. The scripts work from any directory. Times on a 16-vCPU host
+with `NINJA_JOBS=4`: image build TIMES_BUILD, bring-up to PASS TIMES_UP, ho-test TIMES_HO.
+
 ## Topology
 
 ```
@@ -63,12 +94,14 @@ All subnets are `172.30.{1,2,3,4}.0/24`. No host ports are published.
 
 ## Build
 
-Run from this directory. `UERANSIM_SRC` points at a UERANSIM v3.2.8 source tree:
+`scripts/up.sh` builds missing images. By hand, from this directory (base first, the build
+image starts `FROM` it):
 
 ```sh
 docker compose --profile images build base             # ubuntu:noble + build deps + mongosh
 NINJA_JOBS=4 docker compose --profile images build build   # meson build + install
-UERANSIM_SRC=/path/to/ueransim docker compose --profile images build ueransim
+docker compose --profile images build ueransim         # UERANSIM v3.2.8 from GitHub
+UERANSIM_SRC=/path/to/ueransim docker compose --profile images build ueransim   # local tree
 ```
 
 Image names follow `docker/docker-compose.yml`: `$USER/ubuntu-noble-open5gs-base`,
@@ -80,6 +113,8 @@ re-attaches the UERANSIM gNBs/UEs (they do not reconnect to a restarted AMF on t
 
 ## Up / down
 
+The individual steps that `scripts/up.sh` and `scripts/down.sh` automate:
+
 ```sh
 docker compose up -d                          # HPLMN + gnb-h + ue-h
 docker compose --profile vplmn up -d          # + VPLMN + gnb-v + ue-v
@@ -88,12 +123,12 @@ scripts/restart-ran.sh                        # after NF containers were recreat
 docker compose --profile vplmn ps
 docker compose logs -f amf-h sepp-h           # NF logs go to stdout
 docker compose --profile vplmn stop           # stop, keep containers
-docker compose --profile vplmn --profile ho down   # remove containers + networks
+docker compose --profile vplmn --profile ho down -v   # remove containers, networks, volumes
 ```
 
 NFs start in any order: SBI clients retry until the SCP/NRF are up, and the PCF/UDR exit and
 are restarted (`restart: unless-stopped`) until mongo accepts connections, so give the core
-~20 s after `up` before starting UEs (or restart them).
+~20 s after `up` before starting UEs (or restart them); `scripts/up.sh` polls instead.
 
 ## Subscribers
 

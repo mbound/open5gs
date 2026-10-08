@@ -1,6 +1,7 @@
 # Two-PLMN home-routed deployment: HPLMN 999-70 + VPLMN 001-01, one container per NF.
-# See README.md. Run from this directory:
-#   docker compose build base build ueransim             # images (once per source change)
+# See README.md. From scratch: scripts/up.sh (images, core, subscribers, UE checks).
+# By hand, from this directory:
+#   docker compose --profile images build base build ueransim   # images (once per source change)
 #   docker compose up -d                                 # HPLMN 999-70 + gnb-h/ue-h
 #   docker compose --profile vplmn up -d                 # + VPLMN 001-01 + gnb-v/ue-v
 # No host ports are published.
@@ -51,7 +52,7 @@ services:
   ueransim:
     build:
       context: ./ueransim
-      additional_contexts: { ueransim-src: "${UERANSIM_SRC:-../../../ueransim}" }
+      additional_contexts: { ueransim-src: "${UERANSIM_SRC:-https://github.com/aligungr/UERANSIM.git#v3.2.8}" }
     image: ${USER:-open5gs}/ueransim
     profiles: [ images ]
 

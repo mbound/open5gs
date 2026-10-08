@@ -1,5 +1,6 @@
-# UERANSIM gNB/UE image. Build context = this directory; the UERANSIM source tree
-# comes in as the additional context `ueransim-src` (docker-compose.yml, UERANSIM_SRC).
+# UERANSIM gNB/UE image. Build context = this directory; the UERANSIM source tree comes in
+# as the additional context `ueransim-src`: by default the v3.2.8 tag from GitHub, or a local
+# tree via UERANSIM_SRC (docker-compose.yml).
 FROM ubuntu:24.04 AS build
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     make g++ cmake libsctp-dev && rm -rf /var/lib/apt/lists/*
