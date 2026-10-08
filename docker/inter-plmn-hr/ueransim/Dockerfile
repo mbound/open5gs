@@ -3,8 +3,12 @@
 # tree via UERANSIM_SRC (docker-compose.yml).
 FROM ubuntu:24.04 AS build
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    make g++ cmake libsctp-dev && rm -rf /var/lib/apt/lists/*
+    make g++ cmake libsctp-dev patch && rm -rf /var/lib/apt/lists/*
 COPY --from=ueransim-src . /src
+# gNB config key ratInformation: RAT Information (TS 38.413 9.3.1.125) of the gNB's TA in
+# NG Setup Request, to advertise an NR satellite TA. Fails the build if it does not apply.
+COPY rat-information.patch /tmp/
+RUN cd /src && patch -p1 --forward --batch < /tmp/rat-information.patch
 # Roaming: UERANSIM only selects a non-home PLMN that the network listed as equivalent,
 # and Open5GS sends no Equivalent PLMNs. In automatic mode TS 23.122 §4.4.3.1.1 lets the
 # UE select any available, non-forbidden PLMN, so drop the equivalent-PLMN condition.

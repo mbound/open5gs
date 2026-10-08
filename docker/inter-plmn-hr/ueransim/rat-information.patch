@@ -1,0 +1,86 @@
+UERANSIM v3.2.8 (https://github.com/aligungr/UERANSIM)
+Copyright (c) 2023 ALİ GÜNGÖR. UERANSIM is licensed under the GNU AGPL-3.0;
+see the README, LICENSE and CONTRIBUTING files of the UERANSIM tree.
+
+gNB: optional config key `ratInformation` (unlicensed, nb-IoT, nR-LEO, nR-MEO,
+nR-GEO, nR-OTHERSAT). When set, NG Setup Request carries it as the RAT
+Information of the gNB's Supported TA Item (SupportedTAItem-ExtIEs,
+id-RAT-Information = 179; TS 38.413 9.2.6.1, 9.3.1.125). Without the key the
+message is unchanged.
+
+diff --git a/src/gnb.cpp b/src/gnb.cpp
+index 1d5a32a..53be65d 100644
+--- a/src/gnb.cpp
++++ b/src/gnb.cpp
+@@ -6,6 +6,7 @@
+ // See README, LICENSE, and CONTRIBUTING files for licensing details.
+ //
+ 
++#include <algorithm>
+ #include <iostream>
+ #include <stdexcept>
+ #include <unordered_map>
+@@ -56,6 +57,19 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
+         result->gtpAdvertiseIp = yaml::GetIpAddress(config, "gtpAdvertiseIp");
+ 
+     result->ignoreStreamIds = yaml::GetBool(config, "ignoreStreamIds");
++
++    if (yaml::HasField(config, "ratInformation"))
++    {
++        // TS 38.413 9.3.1.125, values in ASN.1 enumeration order
++        static const std::vector<std::string> values{"unlicensed", "nb-IoT", "nR-LEO",
++                                                     "nR-MEO",     "nR-GEO", "nR-OTHERSAT"};
++        std::string rat = yaml::GetString(config, "ratInformation");
++        auto it = std::find(values.begin(), values.end(), rat);
++        if (it == values.end())
++            throw std::runtime_error("Invalid RAT information: " + rat);
++        result->ratInformation = static_cast<long>(it - values.begin());
++    }
++
+     result->pagingDrx = EPagingDrx::V128;
+     result->name = "UERANSIM-gnb-" + std::to_string(result->plmn.mcc) + "-" + std::to_string(result->plmn.mnc) + "-" +
+                    std::to_string(result->getGnbId()); // NOTE: Avoid using "/" dir separator character.
+diff --git a/src/gnb/ngap/interface.cpp b/src/gnb/ngap/interface.cpp
+index 313eba3..037278c 100644
+--- a/src/gnb/ngap/interface.cpp
++++ b/src/gnb/ngap/interface.cpp
+@@ -26,6 +26,8 @@
+ #include <asn/ngap/ASN_NGAP_NGSetupRequest.h>
+ #include <asn/ngap/ASN_NGAP_OverloadStartNSSAIItem.h>
+ #include <asn/ngap/ASN_NGAP_PLMNSupportItem.h>
++#include <asn/ngap/ASN_NGAP_ProtocolExtensionContainer.h>
++#include <asn/ngap/ASN_NGAP_ProtocolExtensionField.h>
+ #include <asn/ngap/ASN_NGAP_ProtocolIE-Field.h>
+ #include <asn/ngap/ASN_NGAP_ServedGUAMIItem.h>
+ #include <asn/ngap/ASN_NGAP_SliceSupportItem.h>
+@@ -158,6 +160,18 @@ void NgapTask::sendNgSetupRequest(int amfId)
+     auto *supportedTa = asn::New<ASN_NGAP_SupportedTAItem>();
+     asn::SetOctetString3(supportedTa->tAC, octet3{m_base->config->tac});
+     asn::SequenceAdd(supportedTa->broadcastPLMNList, broadcastPlmn);
++    if (m_base->config->ratInformation.has_value())
++    {
++        // SupportedTAItem-ExtIEs id-RAT-Information (TS 38.413 9.2.6.1, 9.3.1.125)
++        auto *ext = asn::New<ASN_NGAP_SupportedTAItem_ExtIEs>();
++        ext->id = ASN_NGAP_ProtocolIE_ID_id_RAT_Information;
++        ext->criticality = ASN_NGAP_Criticality_reject;
++        ext->extensionValue.present = ASN_NGAP_SupportedTAItem_ExtIEs__extensionValue_PR_RAT_Information;
++        ext->extensionValue.choice.RAT_Information = m_base->config->ratInformation.value();
++        auto *exts = asn::New<ASN_NGAP_ProtocolExtensionContainer_174P317>();
++        asn::SequenceAdd(*exts, ext);
++        supportedTa->iE_Extensions = reinterpret_cast<ASN_NGAP_ProtocolExtensionContainer *>(exts);
++    }
+ 
+     auto *ieSupportedTaList = asn::New<ASN_NGAP_NGSetupRequestIEs>();
+     ieSupportedTaList->id = ASN_NGAP_ProtocolIE_ID_id_SupportedTAList;
+diff --git a/src/gnb/types.hpp b/src/gnb/types.hpp
+index 7cfc2e1..9ed2b1c 100644
+--- a/src/gnb/types.hpp
++++ b/src/gnb/types.hpp
+@@ -314,6 +314,7 @@ struct GnbConfig
+     std::string gtpIp{};
+     std::optional<std::string> gtpAdvertiseIp{};
+     bool ignoreStreamIds{};
++    std::optional<long> ratInformation{}; // TS 38.413 9.3.1.125 RAT Information of the TA
+ 
+     /* Assigned by program */
+     std::string name{};

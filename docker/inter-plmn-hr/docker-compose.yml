@@ -193,10 +193,10 @@ services:
     command: [ open5gs-udrd, -c, *v ]
     networks: { sbi-v: { ipv4_address: 172.30.2.20, aliases: [ udr.5gc.mnc001.mcc001.3gppnetwork.org ] } }
 
-  gnb-v:
+  gnb-v:   # GNB_V_CONFIG=gnb-v-leo.yaml: the same gNB with its TA as NR(LEO) (scripts/ntn-barring-demo.sh)
     <<: *ran
     profiles: [ vplmn ]
-    command: [ nr-gnb, -c, /etc/ueransim/gnb-v.yaml ]
+    command: [ nr-gnb, -c, "/etc/ueransim/${GNB_V_CONFIG:-gnb-v.yaml}" ]
     networks: { ran: { ipv4_address: 172.30.4.22 } }
   ue-v:
     <<: *ran

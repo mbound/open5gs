@@ -1,0 +1,17 @@
+# UERANSIM gNB in VPLMN 001-01 (TAC 2) -> AMF-v, TA served over NR(LEO) satellite access
+# (gnb-v.yaml + ratInformation; GNB_V_CONFIG=gnb-v-leo.yaml, see scripts/ntn-barring-demo.sh)
+mcc: '001'
+mnc: '01'
+nci: '0x000000020'   # gNB ID 0x2 (32-bit), cell 0x20
+idLength: 32
+tac: 2
+linkIp: 172.30.4.22
+ngapIp: 172.30.4.22
+gtpIp: 172.30.4.22
+amfConfigs:
+  - address: 172.30.4.6
+    port: 38412
+slices:
+  - sst: 1
+ignoreStreamIds: true
+ratInformation: nR-LEO   # RAT Information of the TA in NG Setup (rat-information.patch)

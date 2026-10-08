@@ -101,8 +101,8 @@ image starts `FROM` it):
 ```sh
 docker compose --profile images build base             # ubuntu:noble + build deps + mongosh
 NINJA_JOBS=4 docker compose --profile images build build   # meson build + install
-docker compose --profile images build ueransim         # UERANSIM v3.2.8 from GitHub
-UERANSIM_SRC=/path/to/ueransim docker compose --profile images build ueransim   # local tree
+docker compose --profile images build ueransim         # UERANSIM v3.2.8 from GitHub + rat-information.patch
+UERANSIM_SRC=/path/to/ueransim docker compose --profile images build ueransim   # local v3.2.8 tree
 ```
 
 Image names follow `docker/docker-compose.yml`: `$USER/ubuntu-noble-open5gs-base`,
@@ -150,6 +150,7 @@ the SMFs serve). PCF-h takes policy from the UDR, so no `supi_range` needs to ma
 | HPLMN | `scripts/check-ue.sh ue-h` | `Initial Registration is successful`, `PDU Session establishment is successful`, `uesimtun0, 10.45.0.x`, ping 10.45.0.1 0 % loss |
 | HR roaming | `scripts/check-ue.sh ue-v` (UE 999-70 on gnb-v 001-01) | same as HPLMN, address from the H-SMF pool 10.45/16; `docker compose logs amf-v \| grep Home-Routed`; `docker compose logs sepp-v \| grep established` (N32-c) |
 | N2 HO 999-70 -> 001-01 | `scripts/ho-test.sh` | `SUCCESS` / `All tests passed.` (details below) |
+| NR(LEO) barring | `scripts/ntn-barring-demo.sh` | `== RESULT: PASS` (details below) |
 
 ### Inter-PLMN N2 handover with the `inter-plmn-hr-n2` test binary
 
@@ -175,6 +176,32 @@ the test binary.
 UERANSIM only selects a non-home PLMN that the network sent as an equivalent PLMN, and Open5GS
 sends none, so `ueransim/Dockerfile` drops that condition with a one-line `sed` (automatic
 network selection may pick any available non-forbidden PLMN, TS 23.122 §4.4.3.1.1).
+
+### NR satellite access barring (`scripts/ntn-barring-demo.sh`)
+
+`ueransim/rat-information.patch` (applied in `ueransim/Dockerfile`; the build fails if it
+does not apply) adds an optional gNB config key `ratInformation` (`unlicensed`, `nb-IoT`,
+`nR-LEO`, `nR-MEO`, `nR-GEO`, `nR-OTHERSAT`). When set, the gNB's NG Setup Request carries it as
+the RAT Information of its Supported TA Item (TS 38.413 9.3.1.125), and the AMF takes the
+RAT Type of UEs in that TA from it (TS 23.501 5.4.10). `ueransim/gnb-v-leo.yaml` is gnb-v
+with `ratInformation: nR-LEO`; `GNB_V_CONFIG=gnb-v-leo.yaml` selects it. The default is the
+terrestrial `gnb-v.yaml`. After updating the tree, rebuild the image with
+`docker compose --profile images build ueransim`, because `scripts/up.sh` only builds missing images.
+
+`scripts/ntn-barring-demo.sh` runs against the running deployment:
+
+1. gnb-v is recreated with `gnb-v-leo.yaml`, so TA 001-01/2 is NR(LEO);
+2. `open5gs-dbctl rat_restrictions 999700000000003 NR_LEO` bars ue-v from NR(LEO); ue-v is
+   restarted and its registration is rejected with 5GMM cause #15 (UERANSIM logs
+   `Initial Registration failed [NO_SUITIBLE_CELLS_IN_TA]`) and amf-v logs
+   `Registration rejected due to RAT restrictions`;
+3. `open5gs-dbctl rat_restrictions 999700000000003` clears it; ue-v registers on the NR(LEO)
+   TA, sets up its home-routed session and pings 10.45.0.1 (`scripts/check-ue.sh ue-v`);
+4. gnb-v goes back to `gnb-v.yaml` and ue-v registers again.
+
+It prints `PASS`/`FAIL` per step and `== RESULT: PASS` (exit code 0) at the end. A UE with
+RAT restrictions that is accepted gets them in the Mobility Restriction List of Initial
+Context Setup Request and Handover Request (TS 38.413 9.3.1.85). UERANSIM ignores that list.
 
 ## Known issues and limits
 
