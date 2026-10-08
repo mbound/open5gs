@@ -92,6 +92,8 @@ static void inter_amf_n2_handover_func(abts_case *tc, void *data)
     /********** Insert Subscriber in Database */
     doc = test_db_new_simple(test_ue);
     ABTS_PTR_NOTNULL(tc, doc);
+    /* NR(LEO) restricted; both TAs are terrestrial NR */
+    BCON_APPEND(doc, "rat_restrictions", "[", BCON_UTF8("NR_LEO"), "]");
     ABTS_INT_EQUAL(tc, OGS_OK, test_db_insert_ue(test_ue, doc));
 
     /* Send Registration request */
@@ -160,6 +162,13 @@ static void inter_amf_n2_handover_func(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc,
             NGAP_ProcedureCode_id_InitialContextSetup,
             test_ue->ngap_procedure_code);
+    /* Mobility Restriction List: nR-LEO (bit 3) for the Serving PLMN */
+    ABTS_TRUE(tc, test_ue->mrl.present);
+    ABTS_TRUE(tc, memcmp(&test_ue->mrl.serving_plmn_id,
+                &test_ue->nr_tai.plmn_id, OGS_PLMN_ID_LEN) == 0);
+    ABTS_INT_EQUAL(tc, 0x10, test_ue->mrl.rat_restriction_information);
+    ABTS_INT_EQUAL(tc, 0, test_ue->mrl.extended_primary);
+    memset(&test_ue->mrl, 0, sizeof(test_ue->mrl));
 
     /* Send UERadioCapabilityInfoIndication */
     sendbuf = testngap_build_ue_radio_capability_info_indication(test_ue);
@@ -246,6 +255,15 @@ static void inter_amf_n2_handover_func(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc,
             NGAP_ProcedureCode_id_HandoverResourceAllocation,
             test_ue->ngap_procedure_code);
+    /*
+     * The target AMF has the RAT restrictions from the N14 UeContext
+     * (restrictedRatList) and sends them for the target PLMN
+     */
+    ABTS_TRUE(tc, test_ue->mrl.present);
+    ABTS_TRUE(tc, memcmp(&test_ue->mrl.serving_plmn_id,
+                &target_tai.plmn_id, OGS_PLMN_ID_LEN) == 0);
+    ABTS_INT_EQUAL(tc, 0x10, test_ue->mrl.rat_restriction_information);
+    ABTS_INT_EQUAL(tc, 0, test_ue->mrl.extended_primary);
 
     /* Send HandoverRequestAcknowledge */
     ogs_list_for_each(&test_ue->sess_list, sess)

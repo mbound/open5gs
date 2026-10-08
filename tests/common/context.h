@@ -402,6 +402,15 @@ typedef struct test_ue_s {
     test_attach_request_param_t attach_request_param;
     test_tau_request_param_t tau_request_param;
 
+    /* 5GC: Last received Mobility Restriction List (TS 38.413 9.3.1.85) */
+    struct {
+        bool present;
+        ogs_plmn_id_t serving_plmn_id;
+        uint8_t rat_restriction_information;    /* 0 if no RAT Restrictions */
+        uint16_t extended_primary;  /* Extended RAT Restriction Information */
+        uint8_t extended_secondary;
+    } mrl;
+
     /* 5GC: Last received message */
     S1AP_ProcedureCode_t ngap_procedure_code;
     uint8_t gmm_message_type;

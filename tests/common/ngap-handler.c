@@ -72,6 +72,55 @@ void testngap_handle_ng_setup_response(
     }
 }
 
+/* RAT Restrictions of the Serving PLMN in a Mobility Restriction List */
+static void testngap_save_mobility_restriction_list(
+        test_ue_t *test_ue, NGAP_MobilityRestrictionList_t *list)
+{
+    int i, j;
+    NGAP_ProtocolExtensionContainer_14713P360_t *extensions = NULL;
+
+    ogs_assert(test_ue);
+    ogs_assert(list);
+
+    memset(&test_ue->mrl, 0, sizeof(test_ue->mrl));
+    test_ue->mrl.present = true;
+    memcpy(&test_ue->mrl.serving_plmn_id, list->servingPLMN.buf,
+            ogs_min(list->servingPLMN.size, OGS_PLMN_ID_LEN));
+
+    for (i = 0; list->rATRestrictions &&
+            i < OGS_ASN_LIST_COUNT(list->rATRestrictions); i++) {
+        NGAP_RATRestrictions_Item_t *item =
+            OGS_ASN_LIST_GET(list->rATRestrictions, i);
+        if (memcmp(item->pLMNIdentity.buf,
+                    list->servingPLMN.buf, OGS_PLMN_ID_LEN) != 0)
+            continue;
+
+        test_ue->mrl.rat_restriction_information =
+            item->rATRestrictionInformation.buf[0];
+
+        extensions = (NGAP_ProtocolExtensionContainer_14713P360_t *)
+            item->iE_Extensions;
+        for (j = 0; extensions && j < OGS_ASN_LIST_COUNT(extensions); j++) {
+            NGAP_RATRestrictions_Item_ExtIEs_t *ext =
+                OGS_ASN_LIST_GET(extensions, j);
+            NGAP_ExtendedRATRestrictionInformation_t *extended = NULL;
+
+            if (ext->id !=
+                    NGAP_ProtocolIE_ID_id_ExtendedRATRestrictionInformation)
+                continue;
+            extended = ext->extensionValue.choice.
+                ExtendedRATRestrictionInformation;
+            test_ue->mrl.extended_primary =
+                extended->primaryRATRestriction.buf[0] << 8;
+            if (extended->primaryRATRestriction.size > 1)
+                test_ue->mrl.extended_primary |=
+                    extended->primaryRATRestriction.buf[1];
+            test_ue->mrl.extended_secondary =
+                extended->secondaryRATRestriction.buf[0];
+        }
+    }
+}
+
 void testngap_handle_downlink_nas_transport(
         test_ue_t *test_ue, ogs_ngap_message_t *message)
 {
@@ -106,6 +155,10 @@ void testngap_handle_downlink_nas_transport(
             break;
         case NGAP_ProtocolIE_ID_id_NAS_PDU:
             NAS_PDU = ie->value.choice.NAS_PDU;
+            break;
+        case NGAP_ProtocolIE_ID_id_MobilityRestrictionList:
+            testngap_save_mobility_restriction_list(test_ue,
+                    ie->value.choice.MobilityRestrictionList);
             break;
         default:
             break;
@@ -172,6 +225,10 @@ void testngap_handle_initial_context_setup_request(
             break;
         case NGAP_ProtocolIE_ID_id_PDUSessionResourceSetupListCxtReq:
             PDUSessionList = ie->value.choice.PDUSessionResourceSetupListCxtReq;
+            break;
+        case NGAP_ProtocolIE_ID_id_MobilityRestrictionList:
+            testngap_save_mobility_restriction_list(test_ue,
+                    ie->value.choice.MobilityRestrictionList);
             break;
         case NGAP_ProtocolIE_ID_id_NAS_PDU:
             NAS_PDU = ie->value.choice.NAS_PDU;
@@ -673,6 +730,11 @@ void testngap_handle_handover_request(
             break;
         case NGAP_ProtocolIE_ID_id_PDUSessionResourceSetupListHOReq:
             PDUSessionList = ie->value.choice.PDUSessionResourceSetupListHOReq;
+            break;
+        case NGAP_ProtocolIE_ID_id_MobilityRestrictionList:
+            testngap_save_mobility_restriction_list(test_ue,
+                    ie->value.choice.MobilityRestrictionList);
+            break;
         default:
             break;
         }

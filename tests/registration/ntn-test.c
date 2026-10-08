@@ -111,6 +111,7 @@ static void ntn_registration(abts_case *tc,
             sizeof(test_ue->registration_request_param));
     test_ue->registration_reject_cause = 0;
     test_ue->nas.registration.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
+    memset(&test_ue->mrl, 0, sizeof(test_ue->mrl));
 
     /* Send Registration request */
     test_ue->registration_request_param.guti = 1;
@@ -175,6 +176,25 @@ static void ntn_registration(abts_case *tc,
     recvbuf = testgnb_ngap_read(ngap);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     testngap_recv(test_ue, recvbuf);
+}
+
+/*
+ * Mobility Restriction List in InitialContextSetupRequest (TS 38.413
+ * 9.3.1.85): RAT Restrictions for the Serving PLMN. RAT Restriction
+ * Information has nR-LEO at bit 3 and nR-GEO at bit 5; Extended RAT
+ * Restriction Information (9.3.1.126) is only needed for E-UTRA satellite
+ * access, e.g. e-UTRA-GEO at primary bit 9 (16-bit bitmap).
+ */
+static void ntn_check_mobility_restriction_list(abts_case *tc,
+        test_ue_t *test_ue, uint8_t rat_restriction, uint16_t extended)
+{
+    ABTS_TRUE(tc, test_ue->mrl.present);
+    ABTS_TRUE(tc, memcmp(&test_ue->mrl.serving_plmn_id,
+                &test_ue->nr_tai.plmn_id, OGS_PLMN_ID_LEN) == 0);
+    ABTS_INT_EQUAL(tc, rat_restriction,
+            test_ue->mrl.rat_restriction_information);
+    ABTS_INT_EQUAL(tc, extended, test_ue->mrl.extended_primary);
+    ABTS_INT_EQUAL(tc, 0, test_ue->mrl.extended_secondary);
 }
 
 /* Registration Reject is followed by the release of the NG association */
@@ -292,7 +312,10 @@ static void test1_func(abts_case *tc, void *data)
     test_ue_remove(test_ue);
 }
 
-/* NR(LEO) TA, only NR(GEO) restricted: the RAT Type is NR(LEO), accepted */
+/*
+ * NR(LEO) TA, only NR(GEO) restricted: the RAT Type is NR(LEO), accepted;
+ * the NG-RAN gets the NR(GEO) restriction in the Mobility Restriction List
+ */
 static void test2_func(abts_case *tc, void *data)
 {
     ogs_socknode_t *ngap;
@@ -305,6 +328,7 @@ static void test2_func(abts_case *tc, void *data)
     ntn_db_insert_ue(tc, test_ue, "NR_GEO");
 
     ntn_registration(tc, ngap, test_ue);
+    ntn_check_mobility_restriction_list(tc, test_ue, 0x80 >> 5, 0);
     ntn_registration_accepted(tc, ngap, test_ue);
 
     ABTS_INT_EQUAL(tc, OGS_OK, test_db_remove_ue(test_ue));
@@ -313,7 +337,8 @@ static void test2_func(abts_case *tc, void *data)
 }
 
 /*
- * Terrestrial TA (no RAT Information), NR(LEO) restricted: accepted.
+ * Terrestrial TA (no RAT Information), NR(LEO) restricted: accepted, with
+ * the NR(LEO) restriction in the Mobility Restriction List.
  * The gNB then reports the TA as NR(LEO) in RAN Configuration Update and
  * the next Registration is rejected with #15 from the stored subscription.
  */
@@ -333,6 +358,7 @@ static void test3_func(abts_case *tc, void *data)
     ntn_db_insert_ue(tc, test_ue, "NR_LEO");
 
     ntn_registration(tc, ngap, test_ue);
+    ntn_check_mobility_restriction_list(tc, test_ue, 0x80 >> 3, 0);
     ntn_registration_accepted(tc, ngap, test_ue);
 
     /* Send RANConfigurationUpdate */
@@ -378,6 +404,30 @@ static void test3_func(abts_case *tc, void *data)
     test_ue_remove(test_ue);
 }
 
+/*
+ * Terrestrial TA, WB_E_UTRAN_GEO restricted: accepted; only the Extended RAT
+ * Restriction Information can carry it (e-UTRA-GEO, primary bit 9)
+ */
+static void test4_func(abts_case *tc, void *data)
+{
+    ogs_socknode_t *ngap;
+    test_ue_t *test_ue = ntn_test_ue_add("0000203190");
+
+    ngap = testngap_client(1, AF_INET);
+    ABTS_PTR_NOTNULL(tc, ngap);
+
+    ntn_ng_setup(tc, ngap, test_ue, -1);
+    ntn_db_insert_ue(tc, test_ue, "WB_E_UTRAN_GEO");
+
+    ntn_registration(tc, ngap, test_ue);
+    ntn_check_mobility_restriction_list(tc, test_ue, 0, 0x8000 >> 9);
+    ntn_registration_accepted(tc, ngap, test_ue);
+
+    ABTS_INT_EQUAL(tc, OGS_OK, test_db_remove_ue(test_ue));
+    testgnb_ngap_close(ngap);
+    test_ue_remove(test_ue);
+}
+
 abts_suite *test_ntn(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
@@ -385,6 +435,7 @@ abts_suite *test_ntn(abts_suite *suite)
     abts_run_test(suite, test1_func, NULL);
     abts_run_test(suite, test2_func, NULL);
     abts_run_test(suite, test3_func, NULL);
+    abts_run_test(suite, test4_func, NULL);
 
     return suite;
 }
