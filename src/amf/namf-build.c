@@ -419,6 +419,10 @@ ogs_sbi_request_t *amf_namf_comm_build_create_ue_context(
         amf_namf_comm_base64_encode_5gmm_capability(amf_ue);
     UeContext._5g_mm_capability = encoded_gmm_capability;
 
+    /* TS 29.518 UeContext.restrictedRatList */
+    if (amf_ue->rat_restrictions->count)
+        UeContext.restricted_rat_list = amf_ue->rat_restrictions;
+
     MmContextList = amf_namf_comm_encode_ue_mm_context_list(amf_ue);
     UeContext.mm_context_list = MmContextList;
 

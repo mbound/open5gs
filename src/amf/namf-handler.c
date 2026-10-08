@@ -2315,6 +2315,10 @@ int amf_namf_comm_handle_ue_context_transfer_request(
     /* TODO UeContext.pcfAmPolicyUri */
     /* TODO UeContext.pcfUePolicyUri */
 
+    /* TS 29.518 UeContext.restrictedRatList */
+    if (amf_ue->rat_restrictions->count)
+        UeContext.restricted_rat_list = amf_ue->rat_restrictions;
+
     MmContextList = amf_namf_comm_encode_ue_mm_context_list(amf_ue);
     UeContext.mm_context_list = MmContextList;
 
@@ -2491,6 +2495,18 @@ static int amf_namf_comm_decode_ue_context(
 
     /* TODO UeContext->pcfAmPolicyUri */
     /* TODO UeContext->pcfUePolicyUri */
+
+    /*
+     * TS 29.518 UeContext.restrictedRatList: the target AMF of an inter-AMF
+     * handover needs it for the Mobility Restriction List in Handover
+     * Request (TS 23.502 4.9.1.3.3 step 9) before it reads the subscription.
+     */
+    OpenAPI_list_clear(amf_ue->rat_restrictions);
+    if (UeContext->restricted_rat_list) {
+        OpenAPI_lnode_t *node = NULL;
+        OpenAPI_list_for_each(UeContext->restricted_rat_list, node)
+            OpenAPI_list_add(amf_ue->rat_restrictions, node->data);
+    }
 
     if (UeContext->mm_context_list)
         amf_namf_comm_decode_ue_mm_context_list(
