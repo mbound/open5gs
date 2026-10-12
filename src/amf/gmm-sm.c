@@ -1669,6 +1669,39 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
     }
 }
 
+/*
+ * Discovery of the old AMF for Namf_Communication_UEContextTransfer and
+ * RegistrationStatusUpdate (TS 23.502 4.2.2.2.2 steps 4 and 10): by the
+ * GUAMI of the UE's 5G-GUTI. When that GUAMI belongs to another PLMN the old
+ * AMF is only known to that PLMN's NRF, so the request carries
+ * target-plmn-list/requester-plmn-list (TS 29.510 Table 6.2.3.2.3.1-1) and
+ * is resolved there through the SEPPs, as for the inter-PLMN handover target
+ * AMF in ngap-handler.c.
+ */
+static ogs_sbi_discovery_option_t *old_amf_discovery_option(amf_ue_t *amf_ue)
+{
+    ogs_sbi_discovery_option_t *discovery_option = NULL;
+    ogs_guami_t guami;
+
+    ogs_assert(amf_ue);
+
+    discovery_option = ogs_sbi_discovery_option_new();
+    ogs_assert(discovery_option);
+
+    ogs_nas_to_plmn_id(&guami.plmn_id, &amf_ue->old_guti.nas_plmn_id);
+    memcpy(&guami.amf_id, &amf_ue->old_guti.amf_id, sizeof(ogs_amf_id_t));
+    ogs_sbi_discovery_option_set_guami(discovery_option, &guami);
+
+    if (ogs_sbi_plmn_id_in_vplmn(&guami.plmn_id) == true) {
+        ogs_sbi_discovery_option_add_target_plmn_list(
+                discovery_option, &guami.plmn_id);
+        ogs_sbi_discovery_option_add_requester_plmn_list(
+                discovery_option, &amf_ue->nr_tai.plmn_id);
+    }
+
+    return discovery_option;
+}
+
 static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
         gmm_common_state_e state)
 {
@@ -1763,28 +1796,16 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
             if (gmm_registration_request_from_old_amf(amf_ue,
                         &nas_message->gmm.registration_request) == true) {
                 /* Send UE context transfer to old AMF */
-                ogs_sbi_discovery_option_t *discovery_option = NULL;
-                ogs_guami_t guami;
-
                 amf_ue->amf_ue_context_transfer_state =
                     UE_CONTEXT_INITIAL_STATE;
-
-                discovery_option = ogs_sbi_discovery_option_new();
-                ogs_assert(discovery_option);
 
                 /* Configure Home PLMN ID */
                 ogs_nas_to_plmn_id(
                         &amf_ue->home_plmn_id, &amf_ue->old_guti.nas_plmn_id);
 
-                memcpy(&guami.plmn_id, &amf_ue->home_plmn_id,
-                        sizeof(ogs_plmn_id_t));
-                memcpy(&guami.amf_id, &amf_ue->old_guti.amf_id,
-                        sizeof(ogs_amf_id_t));
-
-                ogs_sbi_discovery_option_set_guami(discovery_option, &guami);
-
                 r = amf_ue_sbi_discover_and_send(
-                        OpenAPI_service_name_namf_comm, discovery_option,
+                        OpenAPI_service_name_namf_comm,
+                        old_amf_discovery_option(amf_ue),
                         amf_namf_comm_build_ue_context_transfer,
                         amf_ue, state, nas_message);
                 ogs_expect(r == OGS_OK);
@@ -2903,22 +2924,11 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                 * to old AMF after Registration request.
                 * Now Registrations status update needs to be sent.
                 */
-                ogs_sbi_discovery_option_t *discovery_option = NULL;
-                ogs_guami_t guami;
                 int state = e->h.sbi.state;
 
-                discovery_option = ogs_sbi_discovery_option_new();
-                ogs_assert(discovery_option);
-
-                memcpy(&guami.plmn_id, &amf_ue->home_plmn_id,
-                        sizeof(ogs_plmn_id_t));
-                memcpy(&guami.amf_id, &amf_ue->old_guti.amf_id,
-                        sizeof(ogs_amf_id_t));
-
-                ogs_sbi_discovery_option_set_guami(discovery_option, &guami);
-
                 r = amf_ue_sbi_discover_and_send(
-                        OpenAPI_service_name_namf_comm, discovery_option,
+                        OpenAPI_service_name_namf_comm,
+                        old_amf_discovery_option(amf_ue),
                         amf_namf_comm_build_registration_status_update,
                         amf_ue, state,
                         (void *)OpenAPI_ue_context_transfer_status_TRANSFERRED);
@@ -3766,22 +3776,11 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
             * to old AMF after Registration request.
             * Now Registrations status update needs to be sent.
             */
-            ogs_sbi_discovery_option_t *discovery_option = NULL;
-            ogs_guami_t guami;
             int state = e->h.sbi.state;
 
-            discovery_option = ogs_sbi_discovery_option_new();
-            ogs_assert(discovery_option);
-
-            memcpy(&guami.plmn_id, &amf_ue->home_plmn_id,
-                    sizeof(ogs_plmn_id_t));
-            memcpy(&guami.amf_id, &amf_ue->old_guti.amf_id,
-                    sizeof(ogs_amf_id_t));
-
-            ogs_sbi_discovery_option_set_guami(discovery_option, &guami);
-
             r = amf_ue_sbi_discover_and_send(
-                    OpenAPI_service_name_namf_comm, discovery_option,
+                    OpenAPI_service_name_namf_comm,
+                    old_amf_discovery_option(amf_ue),
                     amf_namf_comm_build_registration_status_update,
                     amf_ue, state,
                     (void *)OpenAPI_ue_context_transfer_status_NOT_TRANSFERRED);

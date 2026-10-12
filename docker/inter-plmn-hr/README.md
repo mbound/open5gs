@@ -89,7 +89,7 @@ routing in the UPF.
 | nssf-v pcf-v udr-v | | .14 .13 .20 | | | |
 | gnb-h / gnb-v | | | | .21 / .22 | UERANSIM, gNB IDs 0x1 / 0x2 (32 bit) |
 | ue-h / ue-v | | | | .31 / .32 | UERANSIM UEs imsi-999700000000002 / ...003 |
-| ho-test | .50 | | | .50 (+ .51) | `inter-plmn-hr-n2` test binary as gNB1/gNB2 + UE imsi-999700000000020 (profile `ho`) |
+| ho-test | .50 | | | .50 (+ .51) | `inter-plmn-hr-n2` test binary as gNB1/gNB2 + UEs imsi-999700000000020/030 (profile `ho`) |
 
 All subnets are `172.30.{1,2,3,4}.0/24`. No host ports are published.
 
@@ -134,7 +134,7 @@ are restarted (`restart: unless-stopped`) until mongo accepts connections, so gi
 ## Subscribers
 
 Subscribers live only in the HPLMN (`mongodb-h`, read by UDR-h). `scripts/provision.sh` adds
-imsi-999700000000001..005 and ...020 (the `inter-plmn-hr-n2` test UE) with the fork test UE's K `465b5ce8b199b49faa5f0a2ee238a6bc` and
+imsi-999700000000001..005, ...020 and ...030 (the `inter-plmn-hr-n2` test UEs) with the fork test UE's K `465b5ce8b199b49faa5f0a2ee238a6bc` and
 OPc `e8ed289deba952e4283b54e88e6183ca`, DNN `internet`, SST 1 (`open5gs-dbctl
 add_ue_with_apn`; the build image has `open5gs-dbctl` and `mongosh`). It removes each IMSI first,
 so it can be re-run.
@@ -167,6 +167,12 @@ Registration Update at amf-v (H-UDM registration and V-PCF AM policy over N32,
 Registration Accept/Complete, Configuration Update) and a second ping that must return a
 G-PDU, then release. `configs/ho-test.yaml` gives the binary the two AMFs' NGAP addresses,
 TAIs and PLMNs and mongodb-h; all `no_*` flags are set so it starts no NFs itself.
+
+The same binary then runs the idle-mode case with UE imsi-999700000000030: registration on
+gNB1, UE Context Release, then a Registration Request of type mobility registration updating
+with the amf-h 5G-GUTI on gNB2. amf-v discovers the old AMF by the GUAMI through the SEPPs
+and fetches the UE context (Namf_Communication_UEContextTransfer, TS 23.502 4.2.2.2.2 steps
+4-5), authenticates without an Identity Request, and accepts.
 
 The script restarts amf-v (and re-attaches gnb-v/ue-v) first: Open5GS's UDM does not send
 Nudm_UECM_DeregistrationNotify to the old AMF, so a previous run's UE context would stay

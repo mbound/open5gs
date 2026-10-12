@@ -32,6 +32,7 @@ test('inter-amf-n2', testapp_inter_amf_n2_exe,
 testapp_inter_plmn_hr_n2_sources = files('''
     abts-inter-plmn-hr-n2-main.c
     inter-plmn-hr-n2-handover-test.c
+    inter-plmn-idle-mobility-test.c
 '''.split())
 
 testapp_inter_plmn_hr_n2_exe = executable('inter-plmn-hr-n2',

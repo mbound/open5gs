@@ -1,14 +1,17 @@
 /*
- * Standalone two-PLMN home-routed N2 handover integration suite.
+ * Standalone two-PLMN home-routed integration suite: N2 handover and
+ * idle-mode mobility registration update.
  */
 #include "test-app.h"
 
 abts_suite *test_inter_plmn_hr_n2_handover(abts_suite *suite);
+abts_suite *test_inter_plmn_idle_mobility(abts_suite *suite);
 
 const struct testlist {
     abts_suite *(*func)(abts_suite *suite);
 } alltests[] = {
     {test_inter_plmn_hr_n2_handover},
+    {test_inter_plmn_idle_mobility},
     {NULL},
 };
 
