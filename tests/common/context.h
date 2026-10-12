@@ -417,6 +417,7 @@ typedef struct test_ue_s {
     uint8_t gmm_security_header_type; /* of the last downlink 5GMM message */
     ogs_nas_5gmm_cause_t registration_reject_cause;
     uint8_t gsm_message_type;
+    uint8_t gsm_cause; /* of the last PDU session release command */
 
     /* EPC: Last received message */
     S1AP_ProcedureCode_t s1ap_procedure_code;

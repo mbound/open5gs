@@ -2935,8 +2935,13 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                         memset(&param, 0, sizeof(param));
                         param.state =
                             SMF_UE_OR_NETWORK_REQUESTED_PDU_SESSION_RELEASE;
+                        /*
+                         * The UE asked for the release (TS 24.501 6.4.3.3):
+                         * not #39 "reactivation requested", which would make
+                         * the UE establish the session again (6.3.3.3).
+                         */
                         param.n1smbuf = gsm_build_pdu_session_release_command(
-                            sess, OGS_5GSM_CAUSE_REACTIVATION_REQUESTED);
+                            sess, OGS_5GSM_CAUSE_REGULAR_DEACTIVATION);
                         ogs_assert(param.n1smbuf);
 
                         param.n2smbuf =

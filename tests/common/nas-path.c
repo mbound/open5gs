@@ -103,6 +103,8 @@ void testgsm_recv(test_sess_t *sess, ogs_pkbuf_t *pkbuf)
                 &message.gsm.pdu_session_modification_command);
         break;
     case OGS_NAS_5GS_PDU_SESSION_RELEASE_COMMAND:
+        test_ue->gsm_cause =
+            message.gsm.pdu_session_release_command.gsm_cause;
         break;
     case OGS_NAS_5GS_PDU_SESSION_RELEASE_REJECT:
         break;

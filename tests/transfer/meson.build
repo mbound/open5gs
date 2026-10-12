@@ -33,6 +33,7 @@ testapp_inter_plmn_hr_n2_sources = files('''
     abts-inter-plmn-hr-n2-main.c
     inter-plmn-hr-n2-handover-test.c
     inter-plmn-idle-mobility-test.c
+    inter-plmn-hr-release-test.c
 '''.split())
 
 testapp_inter_plmn_hr_n2_exe = executable('inter-plmn-hr-n2',
