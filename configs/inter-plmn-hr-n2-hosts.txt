@@ -12,4 +12,5 @@
 127.0.2.10 nrf.5gc.mnc001.mcc001.3gppnetwork.org
 127.0.2.5  amf.5gc.mnc001.mcc001.3gppnetwork.org
 127.0.2.4  smf.5gc.mnc001.mcc001.3gppnetwork.org
+127.0.2.13 pcf.5gc.mnc001.mcc001.3gppnetwork.org
 127.0.2.14 nssf.5gc.mnc001.mcc001.3gppnetwork.org

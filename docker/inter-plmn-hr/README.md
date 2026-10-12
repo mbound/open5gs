@@ -172,7 +172,9 @@ The same binary then runs the idle-mode case with UE imsi-999700000000030: regis
 gNB1, UE Context Release, then a Registration Request of type mobility registration updating
 with the amf-h 5G-GUTI on gNB2. amf-v discovers the old AMF by the GUAMI through the SEPPs
 and fetches the UE context (Namf_Communication_UEContextTransfer, TS 23.502 4.2.2.2.2 steps
-4-5), authenticates without an Identity Request, and accepts.
+4-5), authenticates without an Identity Request, and accepts. The UE then goes idle and
+returns to gNB1 with the amf-v 5G-GUTI: amf-h fetches the context from amf-v the same way
+and authenticates with the H-AUSF (the home PLMN comes from the SUPI).
 
 The script restarts amf-v (and re-attaches gnb-v/ue-v) first: Open5GS's UDM does not send
 Nudm_UECM_DeregistrationNotify to the old AMF, so a previous run's UE context would stay

@@ -382,3 +382,14 @@ nssf:
         - uri: http://nrf.5gc.mnc001.mcc001.3gppnetwork.org:7777
           s_nssai:
             sst: 1
+
+# V-PCF: AM policy for roamers registering at the V-AMF (TS 23.502 4.2.2.2.2
+# step 16); reads the subscriber's UE-AMBR from the shared test database.
+pcf:
+  sbi:
+    server:
+      - address: pcf.5gc.mnc001.mcc001.3gppnetwork.org
+        port: 7777
+    client:
+      scp:
+        - uri: http://127.0.2.200:7777

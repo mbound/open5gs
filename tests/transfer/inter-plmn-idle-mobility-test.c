@@ -9,7 +9,8 @@
  * through the SEPPs (TS 23.502 4.2.2.2.2 steps 4-5, TS 29.518
  * Namf_Communication_UEContextTransfer), so it knows the SUPI and goes
  * straight to authentication. Without the context it would have to ask for
- * the identity (steps 6-7).
+ * the identity (steps 6-7). The UE then goes idle again and returns to gNB1
+ * with the 5G-GUTI of AMF-v: the same in the other direction.
  */
 
 #include "test-common.h"
@@ -259,32 +260,123 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     rv = testgnb_ngap_send(ngap2, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
-    /*
-     * The V-AMF then registers with the H-UDM and creates the AM policy
-     * association with a V-PCF. configs/inter-plmn-hr-n2.yaml has no V-PCF,
-     * so the registration completes only with TEST_HR_MRU set (the
-     * docker/inter-plmn-hr deployment has one), as in the handover test.
-     */
+    /* Registration accept, complete, configuration update command */
     recvbuf = testgnb_ngap_read(ngap2);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     testngap_recv(test_ue, recvbuf);
-    if (getenv("TEST_HR_MRU")) {
-        ABTS_INT_EQUAL(tc, OGS_NAS_5GS_REGISTRATION_ACCEPT,
-                test_ue->gmm_message_type);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_REGISTRATION_ACCEPT,
+            test_ue->gmm_message_type);
 
-        gmmbuf = testgmm_build_registration_complete(test_ue);
-        ABTS_PTR_NOTNULL(tc, gmmbuf);
-        sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
-        ABTS_PTR_NOTNULL(tc, sendbuf);
-        rv = testgnb_ngap_send(ngap2, sendbuf);
-        ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    gmmbuf = testgmm_build_registration_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
-        recvbuf = testgnb_ngap_read(ngap2);
-        ABTS_PTR_NOTNULL(tc, recvbuf);
-        testngap_recv(test_ue, recvbuf);
-        ABTS_INT_EQUAL(tc, OGS_NAS_5GS_CONFIGURATION_UPDATE_COMMAND,
-                test_ue->gmm_message_type);
-    }
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_CONFIGURATION_UPDATE_COMMAND,
+            test_ue->gmm_message_type);
+
+    /* Idle again: UE context release in gNB2 */
+    sendbuf = testngap_build_ue_context_release_request(test_ue,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_user_inactivity, false);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, NGAP_ProcedureCode_id_UEContextRelease,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_build_ue_context_release_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    ogs_msleep(100);
+
+    /*
+     * Back on gNB1 (999-70, TAC 1) with the 5G-GUTI of AMF-v (001-01).
+     * AMF-h fetches the context from AMF-v, then authenticates the UE with
+     * the AUSF of the UE's home PLMN, which is 999-70 from the SUPI, not
+     * the PLMN of the 5G-GUTI.
+     */
+    test_ue->nr_tai.tac.v = 1;
+    memcpy(&test_ue->nr_tai.plmn_id,
+            &test_self()->plmn_support[0].plmn_id, OGS_PLMN_ID_LEN);
+    memcpy(&test_ue->nr_cgi.plmn_id,
+            &test_ue->nr_tai.plmn_id, OGS_PLMN_ID_LEN);
+    test_ue->nr_cgi.cell_id = 0x40001;
+
+    test_ue->nas.registration.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
+    memset(&test_ue->registration_request_param, 0,
+            sizeof(test_ue->registration_request_param));
+    test_ue->registration_request_param.guti = 1;
+    gmmbuf = testgmm_build_registration_request(test_ue, NULL, false, false);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+
+    test_ue->registration_request_param.gmm_capability = 1;
+    test_ue->registration_request_param.requested_nssai = 1;
+    test_ue->registration_request_param.last_visited_registered_tai = 1;
+    nasbuf = testgmm_build_registration_request(test_ue, NULL, false, false);
+    ABTS_PTR_NOTNULL(tc, nasbuf);
+
+    sendbuf = testngap_build_initial_ue_message(test_ue, gmmbuf,
+                NGAP_RRCEstablishmentCause_mo_Signalling, false, true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_AUTHENTICATION_REQUEST,
+            test_ue->gmm_message_type);
+
+    gmmbuf = testgmm_build_authentication_response(test_ue);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_SECURITY_MODE_COMMAND,
+            test_ue->gmm_message_type);
+
+    gmmbuf = testgmm_build_security_mode_complete(test_ue, nasbuf);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_REGISTRATION_ACCEPT,
+            test_ue->gmm_message_type);
+
+    gmmbuf = testgmm_build_registration_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_CONFIGURATION_UPDATE_COMMAND,
+            test_ue->gmm_message_type);
 
     ogs_msleep(300);
 

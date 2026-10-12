@@ -2400,6 +2400,37 @@ static void amf_namf_comm_decode_ue_mm_context_list(
 static void amf_namf_comm_decode_ue_session_context_list(
             amf_ue_t *amf_ue, OpenAPI_list_t *SessionContextList);
 
+/*
+ * The SUPI (IMSI) names the UE's home network (TS 23.003 2.2). A UE that
+ * registers with a 5G-GUTI gets amf_ue->home_plmn_id from the PLMN of that
+ * 5G-GUTI, i.e. of the old AMF, which is a visited PLMN when the UE comes
+ * back home. AUSF/UDM discovery (amf_ue_sbi_discover_and_send) follows
+ * home_plmn_id, so once the transferred SUPI is known, take the home PLMN
+ * from it when it is one of our serving PLMNs (the MNC length is only known
+ * for those).
+ */
+static void amf_ue_home_plmn_from_supi(amf_ue_t *amf_ue)
+{
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    int i;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->supi);
+
+    ogs_extract_digit_from_string(imsi_bcd, amf_ue->supi);
+
+    for (i = 0; i < ogs_local_conf()->num_of_serving_plmn_id; i++) {
+        char buf[OGS_PLMNIDSTRLEN];
+        ogs_plmn_id_to_string(&ogs_local_conf()->serving_plmn_id[i], buf);
+
+        if (strncmp(imsi_bcd, buf, strlen(buf)) == 0) {
+            memcpy(&amf_ue->home_plmn_id,
+                    &ogs_local_conf()->serving_plmn_id[i], OGS_PLMN_ID_LEN);
+            return;
+        }
+    }
+}
+
 static int amf_namf_comm_decode_ue_context(
         amf_ue_t *amf_ue, OpenAPI_ue_context_t *UeContext,
         bool save_to_release_session_list)
@@ -2413,6 +2444,7 @@ static int amf_namf_comm_decode_ue_context(
     }
 
     amf_ue_set_supi(amf_ue, UeContext->supi);
+    amf_ue_home_plmn_from_supi(amf_ue);
     if (!UeContext->supi_unauth_ind)
         amf_ue->auth_result = OpenAPI_auth_result_AUTHENTICATION_SUCCESS;
 
