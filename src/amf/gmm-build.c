@@ -27,6 +27,29 @@
 static uint16_t get_pdu_session_status(amf_ue_t *amf_ue);
 static uint16_t get_pdu_session_reactivation_result(amf_ue_t *amf_ue);
 
+/*
+ * REGISTRATION REJECT and SERVICE REJECT may be sent without integrity
+ * protection only before secure exchange of NAS messages is established
+ * (TS 24.501 4.4.4.2 e and g, sent before security can be activated).
+ * Afterwards the network shall integrity protect them (TS 24.501 4.4.4.1)
+ * and a UE discards an unprotected one (TS 24.501 4.4.4.2), e.g. a #15
+ * reject for a RAT restriction found after Nudm_SDM_Get.
+ */
+static ogs_pkbuf_t *gmm_encode_reject(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
+        ogs_nas_5gs_message_t *message)
+{
+    if (ran_ue && ran_ue->nas_secure_exchange &&
+            SECURITY_CONTEXT_IS_VALID(amf_ue)) {
+        message->h.security_header_type =
+            OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED_AND_CIPHERED;
+        message->h.extended_protocol_discriminator =
+            OGS_NAS_EXTENDED_PROTOCOL_DISCRIMINATOR_5GMM;
+        return nas_5gs_security_encode(amf_ue, message);
+    }
+
+    return ogs_nas_5gs_plain_encode(message);
+}
+
 ogs_pkbuf_t *gmm_build_registration_accept(amf_ue_t *amf_ue)
 {
     int rv, served_tai_index = 0;
@@ -178,7 +201,7 @@ ogs_pkbuf_t *gmm_build_registration_accept(amf_ue_t *amf_ue)
 }
 
 ogs_pkbuf_t *gmm_build_registration_reject(
-        amf_ue_t *amf_ue, ogs_nas_5gmm_cause_t gmm_cause)
+        ran_ue_t *ran_ue, amf_ue_t *amf_ue, ogs_nas_5gmm_cause_t gmm_cause)
 {
     ogs_nas_5gs_message_t message;
     ogs_nas_5gs_registration_reject_t *registration_reject =
@@ -203,7 +226,7 @@ ogs_pkbuf_t *gmm_build_registration_reject(
             OGS_NAS_5GS_REGISTRATION_REJECT_REJECTED_NSSAI_PRESENT;
     }
 
-    return ogs_nas_5gs_plain_encode(&message);
+    return gmm_encode_reject(ran_ue, amf_ue, &message);
 }
 
 ogs_pkbuf_t *gmm_build_service_accept(amf_ue_t *amf_ue)
@@ -254,7 +277,7 @@ ogs_pkbuf_t *gmm_build_service_accept(amf_ue_t *amf_ue)
 }
 
 ogs_pkbuf_t *gmm_build_service_reject(
-        amf_ue_t *amf_ue, ogs_nas_5gmm_cause_t gmm_cause)
+        ran_ue_t *ran_ue, amf_ue_t *amf_ue, ogs_nas_5gmm_cause_t gmm_cause)
 {
     ogs_nas_5gs_message_t message;
     ogs_nas_5gs_service_reject_t *service_reject = &message.gmm.service_reject;
@@ -280,7 +303,7 @@ ogs_pkbuf_t *gmm_build_service_reject(
                 amf_ue->supi, pdu_session_status->psi);
     }
 
-    return ogs_nas_5gs_plain_encode(&message);
+    return gmm_encode_reject(ran_ue, amf_ue, &message);
 }
 
 ogs_pkbuf_t *gmm_build_de_registration_accept(amf_ue_t *amf_ue)

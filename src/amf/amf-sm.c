@@ -1261,6 +1261,21 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         ogs_assert(amf_ue);
         ogs_assert(OGS_FSM_STATE(&amf_ue->sm));
 
+        /*
+         * Every integrity protected message has had its MAC checked by now
+         * (a failure sets mac_failed, which invalidates the context). From
+         * the first one that passed, downlink 5GMM messages on this
+         * connection are integrity protected (TS 24.501 4.4.4.1).
+         */
+        {
+            ogs_nas_security_header_type_t sh;
+            sh.type = e->nas.type;
+            if (sh.integrity_protected &&
+                amf_ue->selected_int_algorithm != 0 &&
+                SECURITY_CONTEXT_IS_VALID(amf_ue))
+                ran_ue->nas_secure_exchange = true;
+        }
+
         e->amf_ue_id = amf_ue->id;
         e->nas.message = &nas_message;
 

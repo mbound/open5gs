@@ -159,6 +159,8 @@ void testngap_send_to_nas(test_ue_t *test_ue, NGAP_NAS_PDU_t *nasPdu)
     sh = (ogs_nas_5gs_security_header_t *)nasbuf->data;
     ogs_assert(sh);
 
+    test_ue->gmm_security_header_type = sh->security_header_type;
+
     memset(&security_header_type, 0, sizeof(ogs_nas_security_header_type_t));
     switch(sh->security_header_type) {
     case OGS_NAS_SECURITY_HEADER_PLAIN_NAS_MESSAGE:

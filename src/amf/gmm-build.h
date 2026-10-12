@@ -28,11 +28,11 @@ extern "C" {
 
 ogs_pkbuf_t *gmm_build_registration_accept(amf_ue_t *amf_ue);
 ogs_pkbuf_t *gmm_build_registration_reject(
-        amf_ue_t *amf_ue, ogs_nas_5gmm_cause_t gmm_cause);
+        ran_ue_t *ran_ue, amf_ue_t *amf_ue, ogs_nas_5gmm_cause_t gmm_cause);
 
 ogs_pkbuf_t *gmm_build_service_accept(amf_ue_t *amf_ue);
 ogs_pkbuf_t *gmm_build_service_reject(
-        amf_ue_t *amf_ue, ogs_nas_5gmm_cause_t gmm_cause);
+        ran_ue_t *ran_ue, amf_ue_t *amf_ue, ogs_nas_5gmm_cause_t gmm_cause);
 
 ogs_pkbuf_t *gmm_build_de_registration_accept(amf_ue_t *amf_ue);
 ogs_pkbuf_t *gmm_build_de_registration_request(

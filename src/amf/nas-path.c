@@ -212,7 +212,7 @@ int nas_5gs_send_registration_reject(
 
     ogs_warn("[%s] Registration reject [%d]", amf_ue->suci, gmm_cause);
 
-    gmmbuf = gmm_build_registration_reject(amf_ue, gmm_cause);
+    gmmbuf = gmm_build_registration_reject(ran_ue, amf_ue, gmm_cause);
     if (!gmmbuf) {
         ogs_error("gmm_build_registration_reject() failed");
         return OGS_ERROR;
@@ -316,7 +316,7 @@ int nas_5gs_send_service_reject(
 
     ogs_debug("[%s] Service reject", amf_ue->supi);
 
-    gmmbuf = gmm_build_service_reject(amf_ue, gmm_cause);
+    gmmbuf = gmm_build_service_reject(ran_ue, amf_ue, gmm_cause);
     if (!gmmbuf) {
         ogs_error("gmm_build_registration_reject() failed");
         return OGS_ERROR;

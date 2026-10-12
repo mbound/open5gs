@@ -225,6 +225,14 @@ struct ran_ue_s {
      */
     uint32_t        mrl_rat_restrictions;
 
+    /*
+     * Secure exchange of NAS messages is established on this NAS signalling
+     * connection: an uplink 5GMM message on it passed the integrity check
+     * with the current 5G NAS security context (TS 24.501 4.4.4.1). The
+     * AMF's security context outlives the connection, so this is kept here.
+     */
+    bool            nas_secure_exchange;
+
     /* Handover Info */
     ogs_pool_id_t   source_ue_id;
     ogs_pool_id_t   target_ue_id;

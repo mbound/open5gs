@@ -304,6 +304,14 @@ static void test1_func(abts_case *tc, void *data)
     ntn_registration(tc, ngap, test_ue);
     ntn_registration_rejected(tc, ngap, test_ue,
             OGS_5GMM_CAUSE_NO_SUITABLE_CELLS_IN_TRACKING_AREA);
+    /*
+     * The reject follows Security Mode Complete: secure exchange of NAS
+     * messages is established, so it is integrity protected
+     * (TS 24.501 4.4.4.1) or the UE discards it (TS 24.501 4.4.4.2).
+     */
+    ABTS_INT_EQUAL(tc,
+            OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED_AND_CIPHERED,
+            test_ue->gmm_security_header_type);
 
     ogs_msleep(300);
 
@@ -396,6 +404,14 @@ static void test3_func(abts_case *tc, void *data)
 
     ntn_registration_rejected(tc, ngap, test_ue,
             OGS_5GMM_CAUSE_NO_SUITABLE_CELLS_IN_TRACKING_AREA);
+    /*
+     * The Registration Request opened a new NAS signalling connection
+     * without integrity protection, so no secure exchange is established on
+     * it and the reject goes out plain, although the AMF still holds the
+     * UE's security context (TS 24.501 4.4.4.2 e).
+     */
+    ABTS_INT_EQUAL(tc, OGS_NAS_SECURITY_HEADER_PLAIN_NAS_MESSAGE,
+            test_ue->gmm_security_header_type);
 
     ogs_msleep(300);
 
