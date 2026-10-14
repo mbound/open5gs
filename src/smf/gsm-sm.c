@@ -2141,6 +2141,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                              * locally. The H-SMF/H-UPF anchor stays active.
                              */
                             sess->inter_plmn_handover.pending = false;
+                            sess->inter_plmn_handover.cancelled = true;
                             smf_sbi_send_sm_context_updated_data_ho_state(
                                     sess, stream,
                                     OpenAPI_ho_state_CANCELLED);
@@ -2793,7 +2794,18 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                     break;
                 }
 
-                if (trigger == OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED) {
+                if (trigger == OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED &&
+                    sess->inter_plmn_handover.cancelled) {
+                    /*
+                     * Target V-SMF after a relocation cancel (TS 23.502
+                     * 4.23.7.3.4 steps 10-11): only its N4 session is
+                     * released. The UDM registration and the SM policy of
+                     * the PDU session belong to the H-SMF, which keeps the
+                     * session, and the AMF asked for the cancel.
+                     */
+                    OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
+
+                } else if (trigger == OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED) {
 
                     /*
                      * There is no peer waiting for a response, so the

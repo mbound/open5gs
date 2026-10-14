@@ -7,6 +7,7 @@
 abts_suite *test_inter_plmn_hr_n2_handover(abts_suite *suite);
 abts_suite *test_inter_plmn_idle_mobility(abts_suite *suite);
 abts_suite *test_inter_plmn_hr_release(abts_suite *suite);
+abts_suite *test_inter_plmn_hr_n2_cancel(abts_suite *suite);
 
 const struct testlist {
     abts_suite *(*func)(abts_suite *suite);
@@ -14,6 +15,7 @@ const struct testlist {
     {test_inter_plmn_hr_n2_handover},
     {test_inter_plmn_idle_mobility},
     {test_inter_plmn_hr_release},
+    {test_inter_plmn_hr_n2_cancel},
     {NULL},
 };
 

@@ -672,6 +672,8 @@ typedef struct smf_sess_s {
      !(__sESS)->inter_plmn_handover.handover_required)
     struct {
         bool pending;
+        /* Relocation cancelled: the temporary V-SMF context goes quietly */
+        bool cancelled;
 
         char *source_sm_context_uri;
         char *source_smf_id;
