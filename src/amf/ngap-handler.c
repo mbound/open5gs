@@ -5257,6 +5257,17 @@ void ngap_handle_handover_notification(
         /* The V-SMF insertion/removal indication has been used */
         ogs_list_for_each(&amf_ue->sess_list, sess)
             amf_sess_clear_inter_plmn_handover(sess);
+
+        /*
+         * Handover Resource Allocation established the UE context at the
+         * target NG-RAN (TS 38.413 8.4.2): later PDU sessions use PDU
+         * Session Resource Setup (8.2.1), not Initial Context Setup
+         * (8.3.1), as the same-AMF handover does by taking the flags over
+         * from the source RAN context.
+         */
+        target_ue->ue_context_requested = true;
+        target_ue->initial_context_setup_request_sent = true;
+        target_ue->initial_context_setup_response_received = true;
     }
 
     /* Save the number of ongoing SMF transactions before processing sessions */

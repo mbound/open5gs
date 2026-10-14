@@ -627,22 +627,19 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
     rv = testgnb_ngap_send(ngap1, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
-    /* N2 SM information from the H-SMF, not a rejected 5GSM message */
+    /*
+     * N2 SM information from the H-SMF in a PDU Session Resource Setup:
+     * the handover established the UE context at gNB1, so no Initial
+     * Context Setup.
+     */
     recvbuf = testgnb_ngap_read(ngap1);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     testngap_recv(test_ue, recvbuf);
-    ABTS_TRUE(tc, test_ue->ngap_procedure_code ==
-                NGAP_ProcedureCode_id_PDUSessionResourceSetup ||
-            test_ue->ngap_procedure_code ==
-                NGAP_ProcedureCode_id_InitialContextSetup);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_PDUSessionResourceSetup,
+            test_ue->ngap_procedure_code);
 
-    if (test_ue->ngap_procedure_code ==
-            NGAP_ProcedureCode_id_InitialContextSetup)
-        sendbuf = testngap_build_initial_context_setup_response(
-                test_ue, true);
-    else
-        sendbuf = testngap_sess_build_pdu_session_resource_setup_response(
-                sess);
+    sendbuf = testngap_sess_build_pdu_session_resource_setup_response(sess);
     ABTS_PTR_NOTNULL(tc, sendbuf);
     rv = testgnb_ngap_send(ngap1, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
