@@ -242,6 +242,13 @@ static void inter_plmn_hr_n2_cancel_func(abts_case *tc, void *data)
             &test_self()->plmn_support[1].plmn_id, OGS_PLMN_ID_LEN);
     target_tai.tac.v = 2;
 
+    /*
+     * The source gNB's NGAP IDs at AMF-h: reading the Handover Request at
+     * gNB2 switches the test UE to those of AMF-v.
+     */
+    amf_ue_ngap_id = test_ue->amf_ue_ngap_id;
+    ran_ue_ngap_id = test_ue->ran_ue_ngap_id;
+
     /* Send HandoverRequired to a gNB served by the second AMF. */
     sendbuf = testngap_build_handover_required_to_tai(
             test_ue, NGAP_HandoverType_intra5gs,
@@ -292,8 +299,6 @@ static void inter_plmn_hr_n2_cancel_func(abts_case *tc, void *data)
      * TS 23.502 4.23.7.3.4 with 4.9.1.4): the target V-SMF/V-UPF and the
      * target RAN context are released, the session stays at the H-SMF.
      */
-    amf_ue_ngap_id = test_ue->amf_ue_ngap_id;
-    ran_ue_ngap_id = test_ue->ran_ue_ngap_id;
 
     sendbuf = testngap_build_handover_cancel(test_ue,
             NGAP_Cause_PR_radioNetwork,
@@ -716,6 +721,13 @@ static void inter_plmn_hr_n2_cancel_preparation_func(abts_case *tc, void *data)
             &test_self()->plmn_support[1].plmn_id, OGS_PLMN_ID_LEN);
     target_tai.tac.v = 2;
 
+    /*
+     * The source gNB's NGAP IDs at AMF-h: reading the Handover Request at
+     * gNB2 switches the test UE to those of AMF-v.
+     */
+    amf_ue_ngap_id = test_ue->amf_ue_ngap_id;
+    ran_ue_ngap_id = test_ue->ran_ue_ngap_id;
+
     /* Send HandoverRequired to a gNB served by the second AMF. */
     sendbuf = testngap_build_handover_required_to_tai(
             test_ue, NGAP_HandoverType_intra5gs,
@@ -750,8 +762,6 @@ static void inter_plmn_hr_n2_cancel_preparation_func(abts_case *tc, void *data)
      * (TS 38.413 8.4.5): AMF-v completes the cancel once AMF-h answers,
      * without a Handover Command.
      */
-    amf_ue_ngap_id = test_ue->amf_ue_ngap_id;
-    ran_ue_ngap_id = test_ue->ran_ue_ngap_id;
 
     sendbuf = testngap_build_handover_cancel(test_ue,
             NGAP_Cause_PR_radioNetwork,
