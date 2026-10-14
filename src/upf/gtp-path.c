@@ -343,7 +343,37 @@ static void _gtpv1_u_recv_one(ogs_socket_t fd, ogs_sock_t *sock, ogs_pkbuf_t *pk
     ogs_assert(ogs_pkbuf_pull(pkbuf, len));
 
     if (header_desc.type == OGS_GTPU_MSGTYPE_END_MARKER) {
-        /* Nothing */
+        /*
+         * An intermediate UPF relays the End Marker that the PSA sends on
+         * the old N9 path after a path switch towards the access network
+         * tunnel of the session, so the source NG-RAN receives it
+         * (TS 23.502 4.23.7.3.3 step 13b). Without such a tunnel the End
+         * Marker is discarded (TS 23.502 4.2.3.2 step 8a); an unknown TEID
+         * is ignored (TS 29.281 7.3.2.1).
+         */
+        ogs_pfcp_object_t *pfcp_object =
+            ogs_pfcp_object_find_by_teid(header_desc.teid);
+
+        if (pfcp_object && pfcp_object->type == OGS_PFCP_OBJ_SESS_TYPE) {
+            ogs_pfcp_sess_t *pfcp_sess = (ogs_pfcp_sess_t *)pfcp_object;
+            ogs_pfcp_pdr_t *pdr = NULL;
+
+            ogs_list_for_each(&pfcp_sess->pdr_list, pdr) {
+                ogs_pfcp_far_t *far = pdr->far;
+
+                if (header_desc.teid != pdr->f_teid.teid)
+                    continue;
+                if (!far || !far->gnode ||
+                    far->dst_if != OGS_PFCP_INTERFACE_ACCESS ||
+                    !(far->apply_action & OGS_PFCP_APPLY_ACTION_FORW))
+                    continue;
+
+                ogs_debug("[RELAY] End Marker TEID[0x%x] -> TEID[0x%x]",
+                        header_desc.teid, far->outer_header_creation.teid);
+                if (ogs_pfcp_send_end_marker(pdr) != OGS_OK)
+                    ogs_error("End Marker relay failed");
+            }
+        }
 
     } else if (header_desc.type == OGS_GTPU_MSGTYPE_ERR_IND) {
         ogs_pfcp_far_t *far = NULL;

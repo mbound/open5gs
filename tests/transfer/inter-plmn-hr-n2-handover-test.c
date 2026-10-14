@@ -8,6 +8,8 @@
  * the configured SCP/SEPP/N32 path.
  */
 
+#include <poll.h>
+
 #include "test-common.h"
 
 static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
@@ -501,6 +503,23 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
     ABTS_PTR_NOTNULL(tc, sendbuf);
     rv = testgnb_ngap_send(ngap1, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    /*
+     * The H-UPF switches from N9 to N3 and sends End Marker on the old N9
+     * tunnel; the V-UPF still holds the session and relays it on its N3
+     * tunnel, so the source gNB2 receives it (TS 23.502 4.23.7.3.3 step 13b,
+     * 4.2.3.2 step 8a).
+     */
+    {
+        struct pollfd pfd = { .fd = gtpu2->sock->fd, .events = POLLIN };
+
+        ABTS_INT_EQUAL(tc, 1, poll(&pfd, 1, 3000));
+        recvbuf = test_gtpu_read(gtpu2);
+        ABTS_PTR_NOTNULL(tc, recvbuf);
+        ABTS_INT_EQUAL(tc, OGS_GTPU_MSGTYPE_END_MARKER,
+                ((ogs_gtp2_header_t *)recvbuf->data)->type);
+        ogs_pkbuf_free(recvbuf);
+    }
 
     amf_ue_ngap_id = test_ue->amf_ue_ngap_id;
     ran_ue_ngap_id = test_ue->ran_ue_ngap_id;
