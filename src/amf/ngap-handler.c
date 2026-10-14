@@ -4787,6 +4787,18 @@ void ngap_handle_handover_cancel(
      * acknowledge NGAP HandoverCancel only after the target AMF returns 204.
      */
     if (amf_ue->handover.inter_amf_source) {
+        if (!amf_ue->handover.target_ue_context_uri) {
+            /*
+             * TS 38.413 8.4.5: an ongoing preparation can be cancelled.
+             * The target AMF has not answered CreateUEContext yet; finish
+             * the cancel when it does (namf-handler.c).
+             */
+            amf_ue->handover.cancel_pending = true;
+            amf_ue->handover.cancel_cause = *Cause;
+            ogs_info("[%s] Handover Cancel during preparation; waiting for "
+                    "CreateUEContext", amf_ue->supi);
+            return;
+        }
         if (amf_sbi_send_inter_amf_handover_cancel(amf_ue, Cause) != true) {
             ogs_error("[%s] Cannot initiate inter-AMF handover cancel",
                     amf_ue->supi);

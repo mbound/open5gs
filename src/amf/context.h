@@ -768,6 +768,10 @@ struct amf_ue_s {
         ogs_pool_id_t release_ue_context_stream_id;
         char *n2_notify_uri;
         char *target_ue_context_uri;
+
+        /* Handover Cancel before the CreateUEContext response */
+        bool cancel_pending;
+        NGAP_Cause_t cancel_cause;
     } handover;
 
     /* SubscriptionId of Subscription to Data Change Notification to UDM */

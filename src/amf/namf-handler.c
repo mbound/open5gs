@@ -794,6 +794,36 @@ int amf_namf_comm_handle_create_ue_context_response(
         return OGS_NOTFOUND;
     }
 
+    if (amf_ue->handover.cancel_pending) {
+        /*
+         * Handover Cancel received during the preparation (TS 23.502
+         * 4.9.1.4): no Handover Command. Release the UE context created
+         * at the target AMF, then acknowledge the cancel
+         * (client_inter_amf_handover_cancel_cb); without one, acknowledge
+         * now.
+         */
+        amf_ue->handover.cancel_pending = false;
+
+        if (recvmsg->res_status == OGS_SBI_HTTP_STATUS_CREATED &&
+            recvmsg->http.location) {
+            if (amf_ue->handover.target_ue_context_uri)
+                ogs_free(amf_ue->handover.target_ue_context_uri);
+            amf_ue->handover.target_ue_context_uri =
+                ogs_strdup(recvmsg->http.location);
+            ogs_assert(amf_ue->handover.target_ue_context_uri);
+
+            if (amf_sbi_send_inter_amf_handover_cancel(
+                        amf_ue, &amf_ue->handover.cancel_cause) == true)
+                return OGS_OK;
+        }
+
+        amf_ue->handover.inter_amf_source = false;
+        OGS_ASN_CLEAR_DATA(&amf_ue->handover.container);
+        r = ngap_send_handover_cancel_ack(source_ue);
+        ogs_expect(r == OGS_OK);
+        return r;
+    }
+
     if (recvmsg->res_status != OGS_SBI_HTTP_STATUS_CREATED) {
         ogs_error("[%s] CreateUEContext failed [HTTP:%d]",
                 amf_ue->supi, recvmsg->res_status);
