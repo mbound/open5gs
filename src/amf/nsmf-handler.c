@@ -931,16 +931,17 @@ int amf_nsmf_pdusession_handle_update_sm_context(
                     ran_ue_t *target_ue =
                         ran_ue_find_by_id(amf_ue->ran_ue_id);
 
-                    if (target_ue) {
-                        r = ngap_send_ran_ue_context_release_command(
-                                target_ue,
-                                NGAP_Cause_PR_radioNetwork,
-                                NGAP_CauseRadioNetwork_ho_failure_in_target_5GC_ngran_node_or_target_system,
-                                NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
-                        ogs_expect(r == OGS_OK);
-                    } else {
-                        amf_ue_remove(amf_ue);
-                    }
+                    /*
+                     * Handover Failure: the target gNB holds no UE context
+                     * (TS 38.413 8.4.2.3), so no UE Context Release
+                     * Command, whose Complete would never come. Drop the
+                     * UE context created for CreateUEContext now, so that
+                     * a new one for the UE is accepted.
+                     */
+                    if (target_ue)
+                        ran_ue_remove(target_ue);
+                    amf_ue_remove(amf_ue);
+                    return OGS_OK; /* sess and amf_ue are gone */
                 }
 
             } else if (state == AMF_UPDATE_SM_CONTEXT_HANDOVER_CANCEL) {

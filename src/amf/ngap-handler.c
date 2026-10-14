@@ -4607,13 +4607,13 @@ void ngap_handle_handover_failure(
             ogs_expect(r == OGS_OK);
         }
 
+        /*
+         * The target gNB refused and holds no UE context (TS 38.413
+         * 8.4.2.3), nothing to release there; see also nsmf-handler.c.
+         */
         if (xact_count == amf_sess_xact_count(amf_ue)) {
-            r = ngap_send_ran_ue_context_release_command(
-                    target_ue,
-                    NGAP_Cause_PR_radioNetwork,
-                    NGAP_CauseRadioNetwork_ho_failure_in_target_5GC_ngran_node_or_target_system,
-                    NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
-            ogs_expect(r == OGS_OK);
+            ran_ue_remove(target_ue);
+            amf_ue_remove(amf_ue);
         }
         return;
     }
