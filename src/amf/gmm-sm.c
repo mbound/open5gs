@@ -1969,7 +1969,12 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                 break;
             }
 
-            if (!AMF_UE_HAVE_SUCI(amf_ue)) {
+            /*
+             * A context from the old AMF (UE context transfer, N2 handover)
+             * has the SUPI but no SUCI. The UE is known; the integrity
+             * check below authenticates the request.
+             */
+            if (!AMF_UE_HAVE_SUCI(amf_ue) && !AMF_UE_HAVE_SUPI(amf_ue)) {
                 ogs_info("Service request : Unknown UE");
                 r = nas_5gs_send_service_reject(ran_ue, amf_ue,
                     OGS_5GMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK

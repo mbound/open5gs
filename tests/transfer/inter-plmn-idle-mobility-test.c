@@ -15,7 +15,8 @@
  * active in the PDU session status. AMF-v inserts a V-SMF for it (TS 23.502
  * 4.23.1, 4.23.3 case d): the new V-SMF retrieves the SM context from the
  * H-SMF and creates the N9 leg towards the retained H-UPF, so the session
- * survives with the same UE IP address.
+ * survives with the same UE IP address. A service request on gNB2 then
+ * reaches the DN through the new V-UPF and N9.
  *
  * The UE then goes idle again and returns to gNB1 with the 5G-GUTI of
  * AMF-v: the same in the other direction.
@@ -348,6 +349,72 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     sendbuf = testngap_build_ue_context_release_request(test_ue,
             NGAP_Cause_PR_radioNetwork,
             NGAP_CauseRadioNetwork_user_inactivity, false);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, NGAP_ProcedureCode_id_UEContextRelease,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_build_ue_context_release_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    ogs_msleep(100);
+
+    /*
+     * Service request on gNB2 activates the user plane through the new
+     * V-UPF: the echo reply comes back from the DN behind the retained
+     * H-UPF, to the UE IP address assigned in the HPLMN.
+     */
+    test_ue->service_request_param.uplink_data_status = 1;
+    test_ue->service_request_param.psimask.uplink_data_status = 1 << sess->psi;
+    test_ue->service_request_param.pdu_session_status = 0;
+    nasbuf = testgmm_build_service_request(
+            test_ue, OGS_NAS_SERVICE_TYPE_DATA, NULL, false, false);
+    ABTS_PTR_NOTNULL(tc, nasbuf);
+
+    test_ue->service_request_param.uplink_data_status = 0;
+    gmmbuf = testgmm_build_service_request(
+            test_ue, OGS_NAS_SERVICE_TYPE_DATA, nasbuf, true, false);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+
+    sendbuf = testngap_build_initial_ue_message(test_ue, gmmbuf,
+                NGAP_RRCEstablishmentCause_mo_Signalling, true, true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_InitialContextSetup,
+            test_ue->ngap_procedure_code);
+
+    sess->gnb_n3_addr = test_self()->gnb2_addr;
+    sendbuf = testngap_build_initial_context_setup_response(test_ue, true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    ogs_msleep(100);
+
+    rv = test_gtpu_send_ping(gtpu2, qos_flow, TEST_PING_IPV4);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    recvbuf = testgnb_gtpu_read(gtpu2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_GTPU_MSGTYPE_GPDU,
+            ((ogs_gtp2_header_t *)recvbuf->data)->type);
+    ogs_pkbuf_free(recvbuf);
+
+    sendbuf = testngap_build_ue_context_release_request(test_ue,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_user_inactivity, true);
     ABTS_PTR_NOTNULL(tc, sendbuf);
     rv = testgnb_ngap_send(ngap2, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
