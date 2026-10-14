@@ -933,6 +933,11 @@ void smf_5gc_n4_handle_session_modification_response(
             param.skip_ind = true;
 
             smf_namf_comm_send_n1_n2_message_transfer(sess, NULL, &param);
+        } else if (sess->hsmf_handover.create_response) {
+            /* V-SMF removal: answer the CreateSMContext */
+            sess->hsmf_handover.create_response = false;
+            smf_sbi_send_inter_plmn_handover_sm_context_created(
+                    sess, stream, NULL);
         } else {
             smf_sbi_send_sm_context_updated_data_up_cnx_state(
                     sess, stream, OpenAPI_up_cnx_state_DEACTIVATED);

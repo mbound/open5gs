@@ -45,6 +45,7 @@ typedef struct amf_nsmf_pdusession_sm_context_param_s {
     };
 
     int release;
+    bool vsmf_release_only;
     OpenAPI_cause_e cause;
     int gmm_cause;
 

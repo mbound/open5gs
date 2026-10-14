@@ -2794,6 +2794,7 @@ static void amf_namf_comm_decode_ue_session_context_list(
         bool rc;
         bool inter_plmn = false;
         bool insert_vsmf = false;
+        bool remove_vsmf = false;
         ogs_sbi_client_t *client = NULL;
         OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
         char *fqdn = NULL;
@@ -2881,6 +2882,15 @@ static void amf_namf_comm_decode_ue_session_context_list(
              * update, see gmm_handle_registration_update().
              */
             insert_vsmf = true;
+        } else if (!amf_ue->handover.inter_amf_target &&
+                !ogs_sbi_plmn_id_in_vplmn(&amf_ue->home_plmn_id) &&
+                PduSessionContext->hsmf_id && PduSessionContext->vsmf_id) {
+            /*
+             * Idle mode mobility from a VPLMN back into the HPLMN: remove
+             * the V-SMF (TS 23.502 4.23.1, 4.23.3 case c), the H-SMF
+             * creates the SM context with the one at the V-SMF.
+             */
+            remove_vsmf = true;
         }
 
         sess = amf_sess_add(amf_ue, PduSessionContext->pdu_session_id);
@@ -2894,7 +2904,7 @@ static void amf_namf_comm_decode_ue_session_context_list(
         sess->dnn = ogs_strdup(PduSessionContext->dnn);
         amf_ue->nas.access_type = (int)PduSessionContext->access_type;
 
-        if (insert_vsmf) {
+        if (insert_vsmf || remove_vsmf) {
             if (inter_plmn)
                 memcpy(&amf_ue->home_plmn_id,
                         &amf_ue->handover.source_plmn_id,
@@ -2903,18 +2913,29 @@ static void amf_namf_comm_decode_ue_session_context_list(
             sess->inter_plmn_handover.pending = true;
             sess->inter_plmn_handover.source_sm_context_uri =
                 ogs_strdup(PduSessionContext->sm_context_ref);
-            sess->inter_plmn_handover.source_smf_id =
-                ogs_strdup(PduSessionContext->hsmf_id);
             sess->inter_plmn_handover.source_smf_plmn_id_presence = true;
-            memcpy(&sess->inter_plmn_handover.source_smf_plmn_id,
-                    &amf_ue->home_plmn_id, OGS_PLMN_ID_LEN);
+            if (remove_vsmf) {
+                sess->inter_plmn_handover.source_smf_id =
+                    ogs_strdup(PduSessionContext->vsmf_id);
+                ogs_nas_to_plmn_id(
+                        &sess->inter_plmn_handover.source_smf_plmn_id,
+                        &amf_ue->old_guti.nas_plmn_id);
+                sess->inter_plmn_handover.v_smf_id =
+                    ogs_strdup(PduSessionContext->vsmf_id);
+            } else {
+                sess->inter_plmn_handover.source_smf_id =
+                    ogs_strdup(PduSessionContext->hsmf_id);
+                memcpy(&sess->inter_plmn_handover.source_smf_plmn_id,
+                        &amf_ue->home_plmn_id, OGS_PLMN_ID_LEN);
+            }
             sess->inter_plmn_handover.h_smf_id =
                 ogs_strdup(PduSessionContext->hsmf_id);
 
             ogs_info("[%s:%d] Inter-PLMN mobility: retain H-SMF [%s] "
-                    "and insert V-SMF",
+                    "and %s V-SMF",
                     amf_ue->supi, sess->psi,
-                    sess->inter_plmn_handover.h_smf_id);
+                    sess->inter_plmn_handover.h_smf_id,
+                    remove_vsmf ? "remove" : "insert");
 
             ogs_sbi_header_free(&header);
             continue;
@@ -3046,6 +3067,56 @@ int amf_namf_comm_handle_registration_status_update_request(
                         UeRegStatusUpdateRspData.reg_status_transfer_complete = 0;
                     }
                 }
+            }
+        }
+
+        /*
+         * TS 29.518 5.2.2.2.2 step 2a: release the SM context at the V-SMF
+         * (or I-SMF) only for the PDU sessions in smfChangeInfoList.
+         */
+        if (UeRegStatusUpdateReqData->smf_change_info_list) {
+            OpenAPI_lnode_t *node = NULL, *node1 = NULL;
+            OpenAPI_list_for_each(
+                    UeRegStatusUpdateReqData->smf_change_info_list, node) {
+                OpenAPI_smf_change_info_t *SmfChangeInfo = node->data;
+
+                if (!SmfChangeInfo ||
+                    (SmfChangeInfo->smf_change_ind !=
+                        OpenAPI_smf_change_indication_CHANGED &&
+                     SmfChangeInfo->smf_change_ind !=
+                        OpenAPI_smf_change_indication_REMOVED))
+                    continue;
+
+                OpenAPI_list_for_each(
+                        SmfChangeInfo->pdu_session_id_list, node1) {
+                    uint8_t psi = *(double *)node1->data;
+                    amf_nsmf_pdusession_sm_context_param_t param;
+
+                    sess = amf_sess_find_by_psi(amf_ue, psi);
+                    if (!SESSION_CONTEXT_IN_SMF(sess))
+                        continue;
+
+                    memset(&param, 0, sizeof(param));
+                    param.vsmf_release_only = true;
+
+                    amf_sbi_send_release_session(
+                            ran_ue, sess, AMF_RELEASE_SM_CONTEXT_NO_STATE,
+                            &param);
+                }
+            }
+        }
+
+        /*
+         * The source AMF removes the UE context (TS 29.518 5.2.2.2.2): the
+         * transferred PDU sessions now belong to the new AMF. Drop them
+         * here without a release at the SMF; a UE returning to this AMF
+         * must not bring them back with the old context.
+         */
+        {
+            amf_sess_t *next_sess = NULL;
+            ogs_list_for_each_safe(&amf_ue->sess_list, next_sess, sess) {
+                if (ogs_list_count(&sess->sbi.xact_list) == 0)
+                    amf_sess_remove(sess);
             }
         }
 

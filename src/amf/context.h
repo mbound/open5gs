@@ -870,7 +870,8 @@ typedef struct amf_sess_s {
      * AMF has selected and created the visited SM context.
      *
      * Also used for V-SMF insertion at a mobility registration (TS 23.502
-     * 4.23.3 case d), then without handover_required/target_id.
+     * 4.23.3 case d), then without handover_required/target_id, and for
+     * V-SMF removal (case c), then with v_smf_id.
      */
     struct {
         bool pending;

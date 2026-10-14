@@ -128,6 +128,7 @@ int amf_sess_sbi_discover_by_nsi(
         OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option, int state);
 
+int amf_sbi_start_vsmf_removal(ran_ue_t *ran_ue, amf_sess_t *sess);
 int amf_sbi_start_inter_plmn_handover(
         ran_ue_t *ran_ue, amf_sess_t *sess);
 

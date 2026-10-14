@@ -31,6 +31,7 @@ bool smf_nsmf_handle_create_sm_context(
     bool rc;
     bool inter_plmn_handover = false;
     bool registration_insertion = false;
+    bool vsmf_removal = false;
     int r;
     smf_ue_t *smf_ue = NULL;
     smf_bearer_t *qos_flow = NULL;
@@ -101,7 +102,11 @@ bool smf_nsmf_handle_create_sm_context(
         !SmContextCreateData->n1_sm_msg &&
         SmContextCreateData->ho_state == OpenAPI_ho_state_NULL;
 
-    if (registration_insertion) {
+    /* V-SMF removal at a registration, see smf_sess_add_by_sm_context() */
+    vsmf_removal = HOME_ROUTED_ROAMING_IN_HSMF(sess) &&
+        SMF_VSMF_REMOVAL(SmContextCreateData);
+
+    if (registration_insertion || vsmf_removal) {
         sess->pti = OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED;
     } else if (inter_plmn_handover) {
         n2SmInfo = SmContextCreateData->n2_sm_info;
@@ -361,10 +366,12 @@ bool smf_nsmf_handle_create_sm_context(
                                     SmContextCreateData->hplmn_snssai->sd);
     }
 
-    smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
-            SMF_METR_GAUGE_SM_SESSIONNBR, 1);
-    smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
-            SMF_METR_CTR_SM_PDUSESSIONCREATIONREQ, 1);
+    if (!vsmf_removal) {
+        smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
+                SMF_METR_GAUGE_SM_SESSIONNBR, 1);
+        smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
+                SMF_METR_CTR_SM_PDUSESSIONCREATIONREQ, 1);
+    }
 
     if (sess->sm_context_status_uri)
         ogs_free(sess->sm_context_status_uri);
@@ -632,6 +639,43 @@ bool smf_nsmf_handle_create_sm_context(
 
         ogs_info("[%s:%d] Inter-PLMN V-SMF insertion: "
                 "RetrieveSMContext started", smf_ue->supi, sess->psi);
+        return true;
+    }
+
+    if (vsmf_removal) {
+        smf_bearer_t *bearer = NULL;
+
+        /*
+         * TS 23.502 4.23.4.3 steps 10-16 (4.23.3 case c): the UE is back in
+         * the HPLMN, the H-SMF takes the PDU session over from the V-SMF.
+         * It has the complete SM context; the one retrieved from the V-SMF
+         * (step 11) would only add forwarding information for buffered
+         * data, which is not supported, so it is not retrieved. The H-UPF
+         * N9 tunnel becomes the N3 tunnel again, deactivated until the UE
+         * activates the user plane (no N2 SM information, TS 29.502
+         * 5.2.2.2.7).
+         */
+        ogs_free(sess->vsmf_pdu_session_uri);
+        sess->vsmf_pdu_session_uri = NULL;
+
+        ogs_list_for_each(&sess->bearer_list, bearer) {
+            ogs_assert(bearer->ul_pdr);
+            ogs_assert(bearer->dl_far);
+            bearer->ul_pdr->src_if_type =
+                OGS_PFCP_3GPP_INTERFACE_TYPE_N3_3GPP_ACCESS;
+            bearer->dl_far->dst_if_type =
+                OGS_PFCP_3GPP_INTERFACE_TYPE_N3_3GPP_ACCESS;
+        }
+
+        sess->up_cnx_state = OpenAPI_up_cnx_state_DEACTIVATED;
+        sess->hsmf_handover.create_response = true;
+        ogs_assert(OGS_OK ==
+            smf_5gc_pfcp_send_all_pdr_modification_request(
+                sess, stream,
+                OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE, 0, 0));
+
+        ogs_info("[%s:%d] V-SMF removal: H-UPF back to N3",
+                smf_ue->supi, sess->psi);
         return true;
     }
 
@@ -1763,6 +1807,9 @@ bool smf_nsmf_handle_release_sm_context(
         sess->nsmf_param.gmm_cause =
             SmContextReleaseData->_5g_mm_cause_value;
         sess->nsmf_param.cause = SmContextReleaseData->cause;
+        sess->nsmf_param.vsmf_release_only =
+            SmContextReleaseData->is_vsmf_release_only &&
+            SmContextReleaseData->vsmf_release_only;
     }
 
     return true;

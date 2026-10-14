@@ -825,6 +825,9 @@ ogs_sbi_request_t *amf_namf_comm_build_registration_status_update(
     ogs_sbi_request_t *request = NULL;
 
     OpenAPI_ue_reg_status_update_req_data_t UeRegStatusUpdateReqData;
+    OpenAPI_smf_change_info_t *SmfChangeInfo = NULL;
+    OpenAPI_list_t *PduSessionIdList = NULL;
+    amf_sess_t *sess = NULL;
     char *ue_context_id = NULL;
 
     ogs_assert(amf_ue);
@@ -862,10 +865,47 @@ ogs_sbi_request_t *amf_namf_comm_build_registration_status_update(
             UeRegStatusUpdateReqData.to_release_session_list =
                     amf_ue->to_release_session_list;
         }
+
+        /*
+         * TS 23.502 4.23.3: the V-SMF removed for a session (back in the
+         * HPLMN) is indicated so that the old AMF releases the SM context
+         * at the V-SMF only (TS 29.518 5.2.2.2.2).
+         */
+        ogs_list_for_each(&amf_ue->sess_list, sess) {
+            double *psi = NULL;
+
+            if (!sess->inter_plmn_handover.v_smf_id)
+                continue;
+
+            if (!PduSessionIdList) {
+                PduSessionIdList = OpenAPI_list_create();
+                ogs_assert(PduSessionIdList);
+            }
+            psi = ogs_malloc(sizeof(*psi));
+            ogs_assert(psi);
+            *psi = sess->psi;
+            OpenAPI_list_add(PduSessionIdList, psi);
+        }
+        if (PduSessionIdList) {
+            SmfChangeInfo = OpenAPI_smf_change_info_create(
+                    PduSessionIdList, OpenAPI_smf_change_indication_REMOVED);
+            ogs_assert(SmfChangeInfo);
+            UeRegStatusUpdateReqData.smf_change_info_list =
+                OpenAPI_list_create();
+            ogs_assert(UeRegStatusUpdateReqData.smf_change_info_list);
+            OpenAPI_list_add(
+                    UeRegStatusUpdateReqData.smf_change_info_list,
+                    SmfChangeInfo);
+        }
     }
 
     request = ogs_sbi_build_request(&message);
     ogs_expect(request);
+
+    if (SmfChangeInfo) {
+        OpenAPI_list_free(UeRegStatusUpdateReqData.smf_change_info_list);
+        OpenAPI_smf_change_info_free(SmfChangeInfo);
+    }
 
     if (ue_context_id)
         ogs_free(ue_context_id);

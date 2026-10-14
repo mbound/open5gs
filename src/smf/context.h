@@ -100,6 +100,9 @@ typedef struct smf_nsmf_pdusession_param_s {
     bool ho_preparation_indication_presence;
     bool ho_preparation_indication;
 
+    /* ReleaseSMContext: release at this V-SMF only (V-SMF removal) */
+    bool vsmf_release_only;
+
 #define QOS_RULE_CODE_FROM_PFCP_FLAGS(pfcp_flags) \
         (pfcp_flags & OGS_PFCP_MODIFY_CREATE) ? \
             OGS_NAS_QOS_CODE_CREATE_NEW_QOS_RULE : \
@@ -692,8 +695,8 @@ typedef struct smf_sess_s {
         char *target_vsmf_id;
         char *target_vsmf_pdu_session_uri;
         /*
-         * V-SMF insertion at registration: the Create is answered once the
-         * H-UPF has switched to the new N9 path.
+         * V-SMF insertion/removal at registration: the Create (pdu-sessions
+         * or sm-contexts) is answered once the H-UPF has switched path.
          */
         bool create_response;
     } hsmf_handover;
@@ -831,6 +834,14 @@ smf_sess_t *smf_sess_find_by_seid(uint64_t seid);
 smf_sess_t *smf_sess_find_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type);
 smf_sess_t *smf_sess_find_by_psi(smf_ue_t *smf_ue, uint8_t psi);
 smf_sess_t *smf_sess_find_by_charging_id(uint32_t charging_id);
+/*
+ * CreateSMContext at the H-SMF with the SM context at the V-SMF, no N1 and
+ * no handover: V-SMF removal at a registration (TS 29.502 5.2.2.2.7).
+ */
+#define SMF_VSMF_REMOVAL(__cREATEdATA) \
+    ((__cREATEdATA)->sm_context_ref && !(__cREATEdATA)->n1_sm_msg && \
+     !(__cREATEdATA)->h_smf_uri && \
+     (__cREATEdATA)->ho_state == OpenAPI_ho_state_NULL)
 smf_sess_t *smf_sess_find_by_sm_context_ref(char *sm_context_ref);
 void smf_sess_hsmf_switch_to_target_vcn(smf_sess_t *sess);
 smf_sess_t *smf_sess_find_by_pdu_session_ref(char *pdu_session_ref);

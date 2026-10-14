@@ -19,7 +19,10 @@
  * reaches the DN through the new V-UPF and N9.
  *
  * The UE then goes idle again and returns to gNB1 with the 5G-GUTI of
- * AMF-v: the same in the other direction.
+ * AMF-v: the same context transfer in the other direction. AMF-h removes
+ * the V-SMF (TS 23.502 4.23.3 case c): the H-SMF takes the session over
+ * from the V-SMF, the V-SMF releases its context only, and a service
+ * request on gNB1 reaches the DN through the H-UPF directly.
  */
 
 #include "test-common.h"
@@ -455,6 +458,9 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     test_ue->registration_request_param.gmm_capability = 1;
     test_ue->registration_request_param.requested_nssai = 1;
     test_ue->registration_request_param.last_visited_registered_tai = 1;
+    test_ue->registration_request_param.pdu_session_status = 1;
+    test_ue->registration_request_param.psimask.pdu_session_status =
+        1 << sess->psi;
     nasbuf = testgmm_build_registration_request(test_ue, NULL, false, false);
     ABTS_PTR_NOTNULL(tc, nasbuf);
 
@@ -495,6 +501,8 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     testngap_recv(test_ue, recvbuf);
     ABTS_INT_EQUAL(tc, OGS_NAS_5GS_REGISTRATION_ACCEPT,
             test_ue->gmm_message_type);
+    /* The session survived the move back with the V-SMF removed */
+    ABTS_INT_EQUAL(tc, 0x2000, test_ue->pdu_session_status);
 
     gmmbuf = testgmm_build_registration_complete(test_ue);
     ABTS_PTR_NOTNULL(tc, gmmbuf);
@@ -508,6 +516,71 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     testngap_recv(test_ue, recvbuf);
     ABTS_INT_EQUAL(tc, OGS_NAS_5GS_CONFIGURATION_UPDATE_COMMAND,
             test_ue->gmm_message_type);
+
+    sendbuf = testngap_build_ue_context_release_request(test_ue,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_user_inactivity, false);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, NGAP_ProcedureCode_id_UEContextRelease,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_build_ue_context_release_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    ogs_msleep(100);
+
+    /*
+     * Service request on gNB1: the user plane goes straight to the H-UPF
+     * again (N3), same UE IP address.
+     */
+    test_ue->service_request_param.uplink_data_status = 1;
+    test_ue->service_request_param.psimask.uplink_data_status = 1 << sess->psi;
+    test_ue->service_request_param.pdu_session_status = 0;
+    nasbuf = testgmm_build_service_request(
+            test_ue, OGS_NAS_SERVICE_TYPE_DATA, NULL, false, false);
+    ABTS_PTR_NOTNULL(tc, nasbuf);
+
+    test_ue->service_request_param.uplink_data_status = 0;
+    gmmbuf = testgmm_build_service_request(
+            test_ue, OGS_NAS_SERVICE_TYPE_DATA, nasbuf, true, false);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+
+    sendbuf = testngap_build_initial_ue_message(test_ue, gmmbuf,
+                NGAP_RRCEstablishmentCause_mo_Signalling, true, true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_InitialContextSetup,
+            test_ue->ngap_procedure_code);
+
+    sess->gnb_n3_addr = test_self()->gnb1_addr;
+    sendbuf = testngap_build_initial_context_setup_response(test_ue, true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    ogs_msleep(100);
+
+    rv = test_gtpu_send_ping(gtpu1, qos_flow, TEST_PING_IPV4);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    recvbuf = testgnb_gtpu_read(gtpu1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_GTPU_MSGTYPE_GPDU,
+            ((ogs_gtp2_header_t *)recvbuf->data)->type);
+    ogs_pkbuf_free(recvbuf);
 
     ogs_msleep(300);
 

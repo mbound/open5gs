@@ -523,8 +523,10 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_update(
     /*
      * TS 23.502 4.23.3 step 17 case d: for a session anchored at an H-SMF
      * of another PLMN, the AMF in the VPLMN creates the SM context at a new
-     * V-SMF with the SM Context ID at the H-SMF (TS 29.502 5.2.2.2.7). The
-     * Registration Accept waits for the result (nsmf-handler.c).
+     * V-SMF with the SM Context ID at the H-SMF (TS 29.502 5.2.2.2.7).
+     * Case c: back in the HPLMN, the AMF creates it at the H-SMF with the
+     * SM Context ID at the V-SMF. The Registration Accept waits for the
+     * result (nsmf-handler.c).
      */
     ogs_list_for_each_safe(&amf_ue->sess_list, next_sess, sess) {
         if (!AMF_SESS_VSMF_INSERTION_AT_REGISTRATION(sess) ||
@@ -546,7 +548,9 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_update(
             }
         }
 
-        if (amf_sbi_start_inter_plmn_handover(ran_ue, sess) != OGS_OK)
+        if ((sess->inter_plmn_handover.v_smf_id ?
+                amf_sbi_start_vsmf_removal(ran_ue, sess) :
+                amf_sbi_start_inter_plmn_handover(ran_ue, sess)) != OGS_OK)
             AMF_SESS_CLEAR(sess);
     }
 

@@ -1326,7 +1326,13 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     smf_nsmf_handle_release_sm_context(
                             sess, stream, sbi_message);
 
-                    if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
+                    /*
+                     * vsmfReleaseOnly (V-SMF removal, TS 29.502 5.2.2.4.1):
+                     * the H-SMF keeps the PDU session, release the V-UPF
+                     * leg only.
+                     */
+                    if (HOME_ROUTED_ROAMING_IN_VSMF(sess) &&
+                        !sess->nsmf_param.vsmf_release_only) {
                         ogs_assert(OGS_OK ==
                             smf_5gc_pfcp_send_all_pdr_modification_request(
                                 sess, stream,
@@ -1342,6 +1348,16 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     }
                     break;
                 DEFAULT
+                    if (!sbi_message->h.resource.component[1] &&
+                        sbi_message->SmContextCreateData &&
+                        HOME_ROUTED_ROAMING_IN_HSMF(sess) &&
+                        SMF_VSMF_REMOVAL(sbi_message->SmContextCreateData)) {
+                        if (smf_nsmf_handle_create_sm_context(
+                                sess, stream, sbi_message) == false)
+                            ogs_error("[%s:%d] V-SMF removal failed",
+                                    smf_ue->supi, sess->psi);
+                        break;
+                    }
                     ogs_error("Invalid resource name [%s]",
                                 sbi_message->h.resource.component[2]);
                     ogs_assert(true ==

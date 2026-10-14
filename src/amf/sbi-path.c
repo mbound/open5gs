@@ -714,6 +714,26 @@ cleanup:
     return OGS_ERROR;
 }
 
+/* TS 23.502 4.23.4.3 step 10: CreateSMContext at the retained H-SMF */
+int amf_sbi_start_vsmf_removal(ran_ue_t *ran_ue, amf_sess_t *sess)
+{
+    ogs_sbi_discovery_option_t *discovery_option = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(sess->inter_plmn_handover.h_smf_id);
+
+    discovery_option = ogs_sbi_discovery_option_new();
+    ogs_assert(discovery_option);
+    ogs_sbi_discovery_option_set_target_nf_instance_id(
+            discovery_option, sess->inter_plmn_handover.h_smf_id);
+
+    /* The transaction owns discovery_option */
+    return amf_sess_sbi_discover_and_send(
+            OpenAPI_service_name_nsmf_pdusession, discovery_option,
+            amf_nsmf_pdusession_build_create_sm_context,
+            ran_ue, sess, AMF_CREATE_SM_CONTEXT_REGISTRATION_REQUEST, NULL);
+}
+
 int amf_sbi_start_inter_plmn_handover(
         ran_ue_t *ran_ue, amf_sess_t *sess)
 {

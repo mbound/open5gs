@@ -170,7 +170,7 @@ int amf_nsmf_pdusession_handle_create_sm_context(
         ogs_sbi_header_free(&header);
 
         if (state == AMF_CREATE_SM_CONTEXT_REGISTRATION_REQUEST) {
-            ogs_info("[%s:%d] V-SMF inserted [%s]",
+            ogs_info("[%s:%d] SM context created [%s]",
                     amf_ue->supi, sess->psi, sess->sm_context_resource_uri);
             sess->inter_plmn_handover.pending = false;
             vsmf_insertion_done(amf_ue);

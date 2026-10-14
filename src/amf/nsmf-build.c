@@ -637,6 +637,11 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_release_sm_context(
         SmContextReleaseData.is__5g_mm_cause_value = true;
     }
 
+    if (param->vsmf_release_only) {
+        SmContextReleaseData.is_vsmf_release_only = true;
+        SmContextReleaseData.vsmf_release_only = 1;
+    }
+
     memset(&ueLocation, 0, sizeof(ueLocation));
 
     amf_ue = amf_ue_find_by_id(sess->amf_ue_id);

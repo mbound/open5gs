@@ -1817,6 +1817,13 @@ smf_sess_t *smf_sess_add_by_sm_context(ogs_sbi_message_t *message)
     }
 
     sess = smf_sess_find_by_psi(smf_ue, SmContextCreateData->pdu_session_id);
+    if (sess && HOME_ROUTED_ROAMING_IN_HSMF(sess) &&
+        SMF_VSMF_REMOVAL(SmContextCreateData)) {
+        ogs_info("Reuse anchor session for V-SMF removal "
+                "[SUPI:%s,PDU Session identity:%d]",
+                SmContextCreateData->supi, SmContextCreateData->pdu_session_id);
+        return sess;
+    }
     if (sess) {
         ogs_warn("OLD Session Will Release [SUPI:%s,PDU Session identity:%d]",
                 SmContextCreateData->supi, SmContextCreateData->pdu_session_id);
