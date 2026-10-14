@@ -582,6 +582,249 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
             ((ogs_gtp2_header_t *)recvbuf->data)->type);
     ogs_pkbuf_free(recvbuf);
 
+    /*
+     * Idle again, into 001-01 again (V-SMF inserted again; AMF-h hands the
+     * context over with RegistrationStatusUpdate TRANSFERRED), user plane
+     * up on gNB2, then an N2 handover back to gNB1: AMF-h must accept the
+     * CreateUEContext although it served the UE before (TS 29.518
+     * 5.2.2.2.2, TS 23.502 4.9.1.3.2 step 3).
+     */
+    sendbuf = testngap_build_ue_context_release_request(test_ue,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_user_inactivity, true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, NGAP_ProcedureCode_id_UEContextRelease,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_build_ue_context_release_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    ogs_msleep(100);
+
+    test_ue->nr_tai = target_tai;
+    memcpy(&test_ue->nr_cgi.plmn_id, &target_tai.plmn_id, OGS_PLMN_ID_LEN);
+    test_ue->nr_cgi.cell_id = 0x40011;
+
+    test_ue->nas.registration.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
+    memset(&test_ue->registration_request_param, 0,
+            sizeof(test_ue->registration_request_param));
+    test_ue->registration_request_param.guti = 1;
+    gmmbuf = testgmm_build_registration_request(test_ue, NULL, false, false);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+
+    test_ue->registration_request_param.gmm_capability = 1;
+    test_ue->registration_request_param.requested_nssai = 1;
+    test_ue->registration_request_param.last_visited_registered_tai = 1;
+    test_ue->registration_request_param.pdu_session_status = 1;
+    test_ue->registration_request_param.psimask.pdu_session_status =
+        1 << sess->psi;
+    nasbuf = testgmm_build_registration_request(test_ue, NULL, false, false);
+    ABTS_PTR_NOTNULL(tc, nasbuf);
+
+    sendbuf = testngap_build_initial_ue_message(test_ue, gmmbuf,
+                NGAP_RRCEstablishmentCause_mo_Signalling, false, true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_AUTHENTICATION_REQUEST,
+            test_ue->gmm_message_type);
+
+    gmmbuf = testgmm_build_authentication_response(test_ue);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_SECURITY_MODE_COMMAND,
+            test_ue->gmm_message_type);
+
+    gmmbuf = testgmm_build_security_mode_complete(test_ue, nasbuf);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_REGISTRATION_ACCEPT,
+            test_ue->gmm_message_type);
+    ABTS_INT_EQUAL(tc, 0x2000, test_ue->pdu_session_status);
+
+    gmmbuf = testgmm_build_registration_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_CONFIGURATION_UPDATE_COMMAND,
+            test_ue->gmm_message_type);
+
+    sendbuf = testngap_build_ue_context_release_request(test_ue,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_user_inactivity, false);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, NGAP_ProcedureCode_id_UEContextRelease,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_build_ue_context_release_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    ogs_msleep(100);
+
+    test_ue->service_request_param.uplink_data_status = 1;
+    test_ue->service_request_param.psimask.uplink_data_status = 1 << sess->psi;
+    test_ue->service_request_param.pdu_session_status = 0;
+    nasbuf = testgmm_build_service_request(
+            test_ue, OGS_NAS_SERVICE_TYPE_DATA, NULL, false, false);
+    ABTS_PTR_NOTNULL(tc, nasbuf);
+
+    test_ue->service_request_param.uplink_data_status = 0;
+    gmmbuf = testgmm_build_service_request(
+            test_ue, OGS_NAS_SERVICE_TYPE_DATA, nasbuf, true, false);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+
+    sendbuf = testngap_build_initial_ue_message(test_ue, gmmbuf,
+                NGAP_RRCEstablishmentCause_mo_Signalling, true, true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_InitialContextSetup,
+            test_ue->ngap_procedure_code);
+
+    sess->gnb_n3_addr = test_self()->gnb2_addr;
+    sendbuf = testngap_build_initial_context_setup_response(test_ue, true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    ogs_msleep(100);
+
+    rv = test_gtpu_send_ping(gtpu2, qos_flow, TEST_PING_IPV4);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    recvbuf = testgnb_gtpu_read(gtpu2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_GTPU_MSGTYPE_GPDU,
+            ((ogs_gtp2_header_t *)recvbuf->data)->type);
+    ogs_pkbuf_free(recvbuf);
+
+    /* N2 handover 001-01 -> 999-70 (V-SMF removal) */
+    target_tai.tac.v = 1;
+    memcpy(&target_tai.plmn_id,
+            &test_self()->plmn_support[0].plmn_id, OGS_PLMN_ID_LEN);
+
+    sendbuf = testngap_build_handover_required_to_tai(
+            test_ue, NGAP_HandoverType_intra5gs,
+            0x4000, 28, &target_tai,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_handover_desirable_for_radio_reason,
+            true);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_HandoverResourceAllocation,
+            test_ue->ngap_procedure_code);
+
+    sess->gnb_n3_addr = test_self()->gnb1_addr;
+    sendbuf = testngap_build_handover_request_ack(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_HandoverPreparation,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_build_uplink_ran_status_transfer(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_DownlinkRANStatusTransfer,
+            test_ue->ngap_procedure_code);
+
+    test_ue->nr_tai = target_tai;
+    memcpy(&test_ue->nr_cgi.plmn_id, &target_tai.plmn_id, OGS_PLMN_ID_LEN);
+    test_ue->nr_cgi.cell_id = 0x40001;
+    sendbuf = testngap_build_handover_notify(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, NGAP_ProcedureCode_id_UEContextRelease,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_build_ue_context_release_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    ogs_msleep(100);
+
+    rv = test_gtpu_send_ping(gtpu1, qos_flow, TEST_PING_IPV4);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    for (;;) {
+        /* skip an end marker of the old path, if any */
+        recvbuf = testgnb_gtpu_read(gtpu1);
+        ABTS_PTR_NOTNULL(tc, recvbuf);
+        if (((ogs_gtp2_header_t *)recvbuf->data)->type !=
+                OGS_GTPU_MSGTYPE_END_MARKER)
+            break;
+        ogs_pkbuf_free(recvbuf);
+    }
+    ABTS_INT_EQUAL(tc, OGS_GTPU_MSGTYPE_GPDU,
+            ((ogs_gtp2_header_t *)recvbuf->data)->type);
+    ogs_pkbuf_free(recvbuf);
+
     ogs_msleep(300);
 
     /********** Remove Subscriber in Database */

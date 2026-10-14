@@ -28,6 +28,8 @@ static void inter_plmn_hr_n2_cancel_func(abts_case *tc, void *data)
 
     uint64_t ran_ue_ngap_id;
     uint64_t amf_ue_ngap_id;
+    ogs_ip_t source_upf_n3_ip;
+    uint32_t source_upf_n3_teid;
     ogs_5gs_tai_t target_tai;
 
     bson_t *doc = NULL;
@@ -243,6 +245,12 @@ static void inter_plmn_hr_n2_cancel_func(abts_case *tc, void *data)
             &test_self()->plmn_support[1].plmn_id, OGS_PLMN_ID_LEN);
     target_tai.tac.v = 2;
 
+    /* The UL tunnel in use at gNB1; a Handover Request carries the target's */
+    sess = test_sess_find_by_psi(test_ue, 5);
+    ogs_assert(sess);
+    source_upf_n3_ip = sess->upf_n3_ip;
+    source_upf_n3_teid = sess->upf_n3_teid;
+
     /*
      * The source gNB's NGAP IDs at AMF-h: reading the Handover Request at
      * gNB2 switches the test UE to those of AMF-v.
@@ -329,6 +337,11 @@ static void inter_plmn_hr_n2_cancel_func(abts_case *tc, void *data)
 
     test_ue->amf_ue_ngap_id = amf_ue_ngap_id;
     test_ue->ran_ue_ngap_id = ran_ue_ngap_id;
+
+    sess = test_sess_find_by_psi(test_ue, 5);
+    ogs_assert(sess);
+    sess->upf_n3_ip = source_upf_n3_ip;
+    sess->upf_n3_teid = source_upf_n3_teid;
 
     ogs_msleep(300);
 
@@ -507,6 +520,8 @@ static void inter_plmn_hr_n2_cancel_preparation_func(abts_case *tc, void *data)
 
     uint64_t ran_ue_ngap_id;
     uint64_t amf_ue_ngap_id;
+    ogs_ip_t source_upf_n3_ip;
+    uint32_t source_upf_n3_teid;
     uint64_t target_ran_ue_ngap_id, target_amf_ue_ngap_id;
     ogs_5gs_tai_t target_tai;
 
@@ -723,6 +738,12 @@ static void inter_plmn_hr_n2_cancel_preparation_func(abts_case *tc, void *data)
             &test_self()->plmn_support[1].plmn_id, OGS_PLMN_ID_LEN);
     target_tai.tac.v = 2;
 
+    /* The UL tunnel in use at gNB1; a Handover Request carries the target's */
+    sess = test_sess_find_by_psi(test_ue, 5);
+    ogs_assert(sess);
+    source_upf_n3_ip = sess->upf_n3_ip;
+    source_upf_n3_teid = sess->upf_n3_teid;
+
     /*
      * The source gNB's NGAP IDs at AMF-h: reading the Handover Request at
      * gNB2 switches the test UE to those of AMF-v.
@@ -808,6 +829,11 @@ static void inter_plmn_hr_n2_cancel_preparation_func(abts_case *tc, void *data)
 
     test_ue->amf_ue_ngap_id = amf_ue_ngap_id;
     test_ue->ran_ue_ngap_id = ran_ue_ngap_id;
+
+    sess = test_sess_find_by_psi(test_ue, 5);
+    ogs_assert(sess);
+    sess->upf_n3_ip = source_upf_n3_ip;
+    sess->upf_n3_teid = source_upf_n3_teid;
 
     ogs_msleep(300);
 
@@ -986,6 +1012,8 @@ static void inter_plmn_hr_n2_failure_func(abts_case *tc, void *data)
 
     uint64_t ran_ue_ngap_id;
     uint64_t amf_ue_ngap_id;
+    ogs_ip_t source_upf_n3_ip;
+    uint32_t source_upf_n3_teid;
     ogs_5gs_tai_t target_tai;
 
     bson_t *doc = NULL;
@@ -1201,6 +1229,12 @@ static void inter_plmn_hr_n2_failure_func(abts_case *tc, void *data)
             &test_self()->plmn_support[1].plmn_id, OGS_PLMN_ID_LEN);
     target_tai.tac.v = 2;
 
+    /* The UL tunnel in use at gNB1; a Handover Request carries the target's */
+    sess = test_sess_find_by_psi(test_ue, 5);
+    ogs_assert(sess);
+    source_upf_n3_ip = sess->upf_n3_ip;
+    source_upf_n3_teid = sess->upf_n3_teid;
+
     /*
      * The source gNB's NGAP IDs at AMF-h: reading the Handover Request at
      * gNB2 switches the test UE to those of AMF-v.
@@ -1261,6 +1295,11 @@ static void inter_plmn_hr_n2_failure_func(abts_case *tc, void *data)
 
     test_ue->amf_ue_ngap_id = amf_ue_ngap_id;
     test_ue->ran_ue_ngap_id = ran_ue_ngap_id;
+
+    sess = test_sess_find_by_psi(test_ue, 5);
+    ogs_assert(sess);
+    sess->upf_n3_ip = source_upf_n3_ip;
+    sess->upf_n3_teid = source_upf_n3_teid;
 
     ogs_msleep(300);
 

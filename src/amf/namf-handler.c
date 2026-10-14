@@ -258,9 +258,24 @@ int amf_namf_comm_handle_create_ue_context_request(
         return OGS_ERROR;
     }
 
-    if (amf_ue_find_by_supi(CreateData->ue_context->supi)) {
-        ogs_error("[%s] Target AMF already has a UE context", ue_context_id);
-        return OGS_ERROR;
+    amf_ue = amf_ue_find_by_supi(CreateData->ue_context->supi);
+    if (amf_ue) {
+        /*
+         * A context of a UE that is not connected here is stale: this AMF
+         * gave it away (UEContextTransfer, then RegistrationStatusUpdate
+         * TRANSFERRED, after which the source AMF removes it, TS 29.518
+         * 5.2.2.2.2) or served the UE before it moved on. The UE is being
+         * handed over from another AMF now (TS 23.502 4.9.1.3.2 step 3),
+         * so the transferred context replaces it.
+         */
+        if (CM_CONNECTED(amf_ue)) {
+            ogs_error("[%s] Target AMF already has a UE context",
+                    ue_context_id);
+            return OGS_ERROR;
+        }
+        ogs_warn("[%s] Replace the stale UE context", ue_context_id);
+        amf_ue_remove(amf_ue);
+        amf_ue = NULL;
     }
 
     target_ue = ran_ue_add(target_gnb, INVALID_UE_NGAP_ID);
