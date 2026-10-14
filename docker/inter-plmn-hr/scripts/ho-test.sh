@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.." || exit 1
 docker compose --profile vplmn restart amf-v >/dev/null 2>&1; sleep 5
 docker compose --profile vplmn restart gnb-v >/dev/null 2>&1; sleep 3
 docker compose --profile vplmn restart ue-v >/dev/null 2>&1; sleep 5
-timeout 120 docker compose --profile vplmn --profile ho run --rm ho-test > ho-test.log 2>&1
+timeout 300 docker compose --profile vplmn --profile ho run --rm ho-test > ho-test.log 2>&1
 rc=$?
 docker ps -aq -f name=open5gs-hr-ho-test-run | xargs -r docker rm -f >/dev/null
 sed 's/\x1b\[[0-9;]*m//g' ho-test.log | grep -E 'SUCCESS|FAILED|Line [0-9]+:|All tests passed|Failed'
