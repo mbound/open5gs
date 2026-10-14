@@ -534,6 +534,16 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
     test_ue->registration_request_param.pdu_session_status = 1;
     test_ue->registration_request_param.psimask.pdu_session_status =
         1 << 5;
+    /*
+     * Connected with uplink data: Follow-on request pending and the
+     * session in the Uplink data status (TS 24.501 5.5.1.3.2). Its user
+     * plane is already up at gNB1 after the handover; the AMF neither
+     * sets it up again nor releases the NAS signalling connection
+     * (TS 24.501 5.5.1.3.4).
+     */
+    test_ue->nas.registration.follow_on_request = 1;
+    test_ue->registration_request_param.uplink_data_status = 1;
+    test_ue->registration_request_param.psimask.uplink_data_status = 1 << 5;
     nasbuf = testgmm_build_registration_request(
             test_ue, NULL, false, false);
     ABTS_PTR_NOTNULL(tc, nasbuf);

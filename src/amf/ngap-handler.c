@@ -5232,6 +5232,7 @@ void ngap_handle_handover_notification(
     memcpy(&amf_ue->nr_tai, &target_ue->saved.nr_tai, sizeof(ogs_5gs_tai_t));
     memcpy(&amf_ue->nr_cgi, &target_ue->saved.nr_cgi, sizeof(ogs_nr_cgi_t));
     amf_ue->nr_cgi_gnb_id_length = target_ue->saved.nr_cgi_gnb_id_length;
+    target_ue->handed_over = true;
 
     if (source_ue) {
         r = ngap_send_ran_ue_context_release_command(source_ue,
@@ -5268,6 +5269,11 @@ void ngap_handle_handover_notification(
         target_ue->ue_context_requested = true;
         target_ue->initial_context_setup_request_sent = true;
         target_ue->initial_context_setup_response_received = true;
+
+        /* The handed-over PDU sessions have their user plane there too */
+        ogs_list_for_each(&amf_ue->sess_list, sess)
+            if (SESSION_CONTEXT_IN_SMF(sess))
+                target_ue->psimask.activated |= (1 << sess->psi);
     }
 
     /* Save the number of ongoing SMF transactions before processing sessions */

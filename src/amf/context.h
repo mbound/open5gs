@@ -210,6 +210,8 @@ struct ran_ue_s {
     /* UE context */
     bool            ue_context_requested;
     bool            initial_context_setup_request_sent;
+    /* Context created by an N2 handover (Handover Notify received) */
+    bool            handed_over;
 
 #define CONTEXT_SETUP_ESTABLISHED(__aMF) \
     CM_CONNECTED(__aMF) && \

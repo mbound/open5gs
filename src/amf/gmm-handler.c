@@ -566,6 +566,16 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_update(
 
         ogs_list_for_each(&amf_ue->sess_list, sess) {
             if (psimask & (1 << sess->psi)) {
+                /*
+                 * TS 23.502 4.9.1.3.3 step 12: the registration after an
+                 * N2 handover is a subset of the procedure; the user plane
+                 * of the handed-over sessions is already at the target
+                 * NG-RAN. Setting it up again is refused there, which
+                 * would deactivate it and release the connection.
+                 */
+                if (ran_ue->handed_over &&
+                    (ran_ue->psimask.activated & (1 << sess->psi)))
+                    continue;
                 if (SESSION_CONTEXT_IN_SMF(sess))
                     amf_sbi_send_activating_session(
                             ran_ue, sess,
