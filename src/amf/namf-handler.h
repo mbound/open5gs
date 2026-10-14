@@ -50,6 +50,8 @@ int amf_namf_comm_handle_ue_context_transfer_request(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_comm_handle_ue_context_transfer_response(
         ogs_sbi_message_t *recvmsg, amf_ue_t *amf_ue);
+void amf_namf_comm_release_vsmf_only(amf_ue_t *amf_ue, ran_ue_t *ran_ue,
+        OpenAPI_list_t *SmfChangeInfoList);
 int amf_namf_comm_handle_registration_status_update_request(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg);
 int amf_namf_comm_handle_registration_status_update_response(

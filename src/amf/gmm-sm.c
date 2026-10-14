@@ -806,6 +806,27 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
         case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
+                /*
+                 * CreateUEContext response for a UE that was handed over
+                 * into this AMF and hands over out again before its
+                 * Mobility Registration Update (context still in this
+                 * state), see gmm_state_registered().
+                 */
+                if (!sbi_message->h.resource.component[2]) {
+                    if (state != AMF_CREATE_UE_CONTEXT_HANDOVER_REQUIRED) {
+                        ogs_error("[%s] Unexpected CreateUEContext response "
+                                "state [%d]", amf_ue->supi, state);
+                        break;
+                    }
+
+                    r = amf_namf_comm_handle_create_ue_context_response(
+                            sbi_message, amf_ue);
+                    if (r != OGS_OK)
+                        ogs_error("[%s] CreateUEContext response failed",
+                                amf_ue->supi);
+                    break;
+                }
+
                 SWITCH(sbi_message->h.resource.component[2])
                 CASE(OGS_SBI_RESOURCE_NAME_TRANSFER)
 

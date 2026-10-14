@@ -699,6 +699,8 @@ typedef struct smf_sess_s {
          * or sm-contexts) is answered once the H-UPF has switched path.
          */
         bool create_response;
+        /* N2 handover with V-SMF removal prepared, see hoState COMPLETED */
+        bool vsmf_removal;
     } hsmf_handover;
 
     /* Handover */
@@ -835,13 +837,18 @@ smf_sess_t *smf_sess_find_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type);
 smf_sess_t *smf_sess_find_by_psi(smf_ue_t *smf_ue, uint8_t psi);
 smf_sess_t *smf_sess_find_by_charging_id(uint32_t charging_id);
 /*
- * CreateSMContext at the H-SMF with the SM context at the V-SMF, no N1 and
- * no handover: V-SMF removal at a registration (TS 29.502 5.2.2.2.7).
+ * CreateSMContext at the H-SMF with the SM context at the V-SMF, no N1:
+ * V-SMF removal at a registration (TS 29.502 5.2.2.2.7) or, with hoState
+ * PREPARING and the HandoverRequired transfer, at an N2 handover
+ * (5.2.2.2.5).
  */
 #define SMF_VSMF_REMOVAL(__cREATEdATA) \
     ((__cREATEdATA)->sm_context_ref && !(__cREATEdATA)->n1_sm_msg && \
      !(__cREATEdATA)->h_smf_uri && \
-     (__cREATEdATA)->ho_state == OpenAPI_ho_state_NULL)
+     ((__cREATEdATA)->ho_state == OpenAPI_ho_state_NULL || \
+      ((__cREATEdATA)->ho_state == OpenAPI_ho_state_PREPARING && \
+       (__cREATEdATA)->n2_sm_info_type == \
+            OpenAPI_n2_sm_info_type_HANDOVER_REQUIRED)))
 smf_sess_t *smf_sess_find_by_sm_context_ref(char *sm_context_ref);
 void smf_sess_hsmf_switch_to_target_vcn(smf_sess_t *sess);
 smf_sess_t *smf_sess_find_by_pdu_session_ref(char *pdu_session_ref);

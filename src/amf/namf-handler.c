@@ -349,13 +349,17 @@ int amf_namf_comm_handle_create_ue_context_request(
         if (!sess->inter_plmn_handover.target_id)
             goto cleanup;
 
-        r = amf_sbi_start_inter_plmn_handover(target_ue, sess);
+        r = sess->inter_plmn_handover.v_smf_id ?
+            amf_sbi_start_vsmf_removal(target_ue, sess) :
+            amf_sbi_start_inter_plmn_handover(target_ue, sess);
         if (r != OGS_OK)
             goto cleanup;
 
-        ogs_info("[%s:%d] CreateUEContext accepted; selecting target V-SMF "
-                "for HR inter-PLMN handover",
-                ue_context_id, sess->psi);
+        ogs_info("[%s:%d] CreateUEContext accepted; %s for HR inter-PLMN "
+                "handover", ue_context_id, sess->psi,
+                sess->inter_plmn_handover.v_smf_id ?
+                    "H-SMF takes over from the V-SMF" :
+                    "selecting target V-SMF");
         return OGS_OK;
     }
 
@@ -1564,6 +1568,14 @@ respond:
 
     if (status != OGS_SBI_HTTP_STATUS_NO_CONTENT)
         return OGS_ERROR;
+
+    /*
+     * TS 23.502 4.23.7.3.3 step 11a: for the PDU sessions in
+     * smfChangeInfoList the source AMF releases the SM context at the
+     * V-SMF only (vsmfReleaseOnly, TS 29.502 5.2.2.4.1).
+     */
+    amf_namf_comm_release_vsmf_only(amf_ue, source_ue,
+            notification->smf_change_info_list);
 
     /*
      * TS 23.502 4.9.1.3.3: after HANDOVER_COMPLETED from the target AMF,
@@ -2860,6 +2872,15 @@ static void amf_namf_comm_decode_ue_session_context_list(
             if (PduSessionContext->hsmf_id &&
                 !PduSessionContext->vsmf_id) {
                 insert_vsmf = true;
+            } else if (PduSessionContext->hsmf_id &&
+                    PduSessionContext->vsmf_id &&
+                    !ogs_sbi_plmn_id_in_vplmn(&amf_ue->home_plmn_id)) {
+                /*
+                 * VPLMN -> HPLMN: remove the V-SMF (TS 23.502 4.23.7.3
+                 * with 4.23.1), the H-SMF creates the SM context with the
+                 * one at the source V-SMF.
+                 */
+                remove_vsmf = true;
             } else {
                 ogs_error("[%s:%d] Unsupported inter-PLMN SMF transition "
                         "[hsmf:%s vsmf:%s]",
@@ -2905,7 +2926,7 @@ static void amf_namf_comm_decode_ue_session_context_list(
         amf_ue->nas.access_type = (int)PduSessionContext->access_type;
 
         if (insert_vsmf || remove_vsmf) {
-            if (inter_plmn)
+            if (inter_plmn && insert_vsmf)
                 memcpy(&amf_ue->home_plmn_id,
                         &amf_ue->handover.source_plmn_id,
                         OGS_PLMN_ID_LEN);
@@ -2917,9 +2938,14 @@ static void amf_namf_comm_decode_ue_session_context_list(
             if (remove_vsmf) {
                 sess->inter_plmn_handover.source_smf_id =
                     ogs_strdup(PduSessionContext->vsmf_id);
-                ogs_nas_to_plmn_id(
-                        &sess->inter_plmn_handover.source_smf_plmn_id,
-                        &amf_ue->old_guti.nas_plmn_id);
+                if (inter_plmn)
+                    memcpy(&sess->inter_plmn_handover.source_smf_plmn_id,
+                            &amf_ue->handover.source_plmn_id,
+                            OGS_PLMN_ID_LEN);
+                else
+                    ogs_nas_to_plmn_id(
+                            &sess->inter_plmn_handover.source_smf_plmn_id,
+                            &amf_ue->old_guti.nas_plmn_id);
                 sess->inter_plmn_handover.v_smf_id =
                     ogs_strdup(PduSessionContext->vsmf_id);
             } else {
@@ -2977,6 +3003,43 @@ static void amf_namf_comm_decode_ue_session_context_list(
             ogs_strdup(message.h.resource.component[1]);
 
         ogs_sbi_header_free(&header);
+    }
+}
+
+/*
+ * Release the SM context at the V-SMF (or I-SMF) only for the PDU sessions
+ * listed with smfChangeInd CHANGED or REMOVED (TS 29.518 5.2.2.2.2,
+ * 5.2.2.3.6.2).
+ */
+void amf_namf_comm_release_vsmf_only(amf_ue_t *amf_ue, ran_ue_t *ran_ue,
+        OpenAPI_list_t *SmfChangeInfoList)
+{
+    OpenAPI_lnode_t *node = NULL, *node1 = NULL;
+
+    OpenAPI_list_for_each(SmfChangeInfoList, node) {
+        OpenAPI_smf_change_info_t *SmfChangeInfo = node->data;
+
+        if (!SmfChangeInfo ||
+            (SmfChangeInfo->smf_change_ind !=
+                OpenAPI_smf_change_indication_CHANGED &&
+             SmfChangeInfo->smf_change_ind !=
+                OpenAPI_smf_change_indication_REMOVED))
+            continue;
+
+        OpenAPI_list_for_each(SmfChangeInfo->pdu_session_id_list, node1) {
+            uint8_t psi = *(double *)node1->data;
+            amf_nsmf_pdusession_sm_context_param_t param;
+            amf_sess_t *sess = amf_sess_find_by_psi(amf_ue, psi);
+
+            if (!SESSION_CONTEXT_IN_SMF(sess))
+                continue;
+
+            memset(&param, 0, sizeof(param));
+            param.vsmf_release_only = true;
+
+            amf_sbi_send_release_session(
+                    ran_ue, sess, AMF_RELEASE_SM_CONTEXT_VSMF_ONLY, &param);
+        }
     }
 }
 
@@ -3074,37 +3137,8 @@ int amf_namf_comm_handle_registration_status_update_request(
          * TS 29.518 5.2.2.2.2 step 2a: release the SM context at the V-SMF
          * (or I-SMF) only for the PDU sessions in smfChangeInfoList.
          */
-        if (UeRegStatusUpdateReqData->smf_change_info_list) {
-            OpenAPI_lnode_t *node = NULL, *node1 = NULL;
-            OpenAPI_list_for_each(
-                    UeRegStatusUpdateReqData->smf_change_info_list, node) {
-                OpenAPI_smf_change_info_t *SmfChangeInfo = node->data;
-
-                if (!SmfChangeInfo ||
-                    (SmfChangeInfo->smf_change_ind !=
-                        OpenAPI_smf_change_indication_CHANGED &&
-                     SmfChangeInfo->smf_change_ind !=
-                        OpenAPI_smf_change_indication_REMOVED))
-                    continue;
-
-                OpenAPI_list_for_each(
-                        SmfChangeInfo->pdu_session_id_list, node1) {
-                    uint8_t psi = *(double *)node1->data;
-                    amf_nsmf_pdusession_sm_context_param_t param;
-
-                    sess = amf_sess_find_by_psi(amf_ue, psi);
-                    if (!SESSION_CONTEXT_IN_SMF(sess))
-                        continue;
-
-                    memset(&param, 0, sizeof(param));
-                    param.vsmf_release_only = true;
-
-                    amf_sbi_send_release_session(
-                            ran_ue, sess, AMF_RELEASE_SM_CONTEXT_NO_STATE,
-                            &param);
-                }
-            }
-        }
+        amf_namf_comm_release_vsmf_only(amf_ue, ran_ue,
+                UeRegStatusUpdateReqData->smf_change_info_list);
 
         /*
          * The source AMF removes the UE context (TS 29.518 5.2.2.2.2): the

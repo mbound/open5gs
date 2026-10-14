@@ -80,6 +80,7 @@ bool smf_nsmf_handle_create_sm_context(
      * not a new PDU Session Establishment Request in N1.
      */
     inter_plmn_handover =
+        !HOME_ROUTED_ROAMING_IN_HSMF(sess) &&
         SmContextCreateData->sm_context_ref &&
         SmContextCreateData->sm_context_smf_id &&
         SmContextCreateData->sm_context_smf_plmn_id &&
@@ -639,6 +640,28 @@ bool smf_nsmf_handle_create_sm_context(
 
         ogs_info("[%s:%d] Inter-PLMN V-SMF insertion: "
                 "RetrieveSMContext started", smf_ue->supi, sess->psi);
+        return true;
+    }
+
+    if (vsmf_removal &&
+        SmContextCreateData->ho_state == OpenAPI_ho_state_PREPARING) {
+        /*
+         * TS 23.502 4.23.7.3.2 steps 9-13: N2 handover back into the HPLMN.
+         * No target I-UPF, the H-UPF (PSA) N9 tunnel serves as N3 tunnel:
+         * return its UL tunnel and the QoS flows to the target AMF. The DL
+         * path switches only at hoState COMPLETED (execution step 13), the
+         * V-SMF stays until then.
+         */
+        ogs_pkbuf_t *n2smbuf =
+            ngap_build_pdu_session_resource_setup_request_transfer(sess);
+        ogs_assert(n2smbuf);
+
+        sess->hsmf_handover.vsmf_removal = true;
+        smf_sbi_send_inter_plmn_handover_sm_context_created(
+                sess, stream, n2smbuf);
+
+        ogs_info("[%s:%d] V-SMF removal at N2 handover prepared",
+                smf_ue->supi, sess->psi);
         return true;
     }
 
@@ -1544,6 +1567,25 @@ bool smf_nsmf_handle_update_sm_context(
             bool far_update = false;
             smf_bearer_t *qos_flow = NULL;
 
+            if (sess->hsmf_handover.vsmf_removal) {
+                /*
+                 * TS 23.502 4.23.7.3.3 step 13: the H-SMF serves the PDU
+                 * session without V-SMF, the H-UPF tunnel is N3 again.
+                 */
+                sess->hsmf_handover.vsmf_removal = false;
+                ogs_free(sess->vsmf_pdu_session_uri);
+                sess->vsmf_pdu_session_uri = NULL;
+
+                ogs_list_for_each(&sess->bearer_list, qos_flow) {
+                    ogs_assert(qos_flow->ul_pdr);
+                    ogs_assert(qos_flow->dl_far);
+                    qos_flow->ul_pdr->src_if_type =
+                        OGS_PFCP_3GPP_INTERFACE_TYPE_N3_3GPP_ACCESS;
+                    qos_flow->dl_far->dst_if_type =
+                        OGS_PFCP_3GPP_INTERFACE_TYPE_N3_3GPP_ACCESS;
+                }
+            }
+
             if (sess->handover.prepared == true) {
                 /* Need to Update? */
                 if (memcmp(&sess->remote_dl_ip, &sess->handover.remote_dl_ip,
@@ -1644,6 +1686,7 @@ bool smf_nsmf_handle_update_sm_context(
             }
 
             sess->handover.prepared = false;
+            sess->hsmf_handover.vsmf_removal = false;
 
             ogs_list_for_each(&sess->bearer_list, qos_flow) {
                 ogs_pfcp_far_t *dl_far = qos_flow->dl_far;

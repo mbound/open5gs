@@ -3,8 +3,9 @@
  *
  * HPLMN 999-70 -> VPLMN 001-01.  The PDU session starts directly anchored
  * at the H-SMF/H-UPF, then connected-mode N2 handover inserts the target
- * V-SMF/V-UPF and N9 while retaining the H-UPF PSA.  Inter-PLMN SBI is
- * routed through the configured SCP/SEPP/N32 path.
+ * V-SMF/V-UPF and N9 while retaining the H-UPF PSA.  The UE then hands
+ * back to the HPLMN, removing the V-SMF.  Inter-PLMN SBI is routed through
+ * the configured SCP/SEPP/N32 path.
  */
 
 #include "test-common.h"
@@ -438,15 +439,181 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
         ogs_pkbuf_free(recvbuf);
     }
 
-    /* Release the target-AMF NG context cleanly. */
-    sendbuf = testngap_build_ue_context_release_request(test_ue,
+    /*
+     * Hand back to gNB1 in the HPLMN (999-70, TAC 1, AMF-h). AMF-h removes
+     * the V-SMF (TS 23.502 4.23.7.3, V-SMF removal per 4.23.1): the H-SMF
+     * takes the session over and switches the H-UPF from N9 to N3 towards
+     * gNB1, the V-SMF/V-UPF context is released.
+     */
+    target_tai.tac.v = 1;
+    memcpy(&target_tai.plmn_id,
+            &test_self()->plmn_support[0].plmn_id, OGS_PLMN_ID_LEN);
+
+    sendbuf = testngap_build_handover_required_to_tai(
+            test_ue, NGAP_HandoverType_intra5gs,
+            0x4000, 28, &target_tai,
             NGAP_Cause_PR_radioNetwork,
-            NGAP_CauseRadioNetwork_user_inactivity, false);
+            NGAP_CauseRadioNetwork_handover_desirable_for_radio_reason,
+            true);
     ABTS_PTR_NOTNULL(tc, sendbuf);
     rv = testgnb_ngap_send(ngap2, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_HandoverResourceAllocation,
+            test_ue->ngap_procedure_code);
+
+    ogs_list_for_each(&test_ue->sess_list, sess)
+        sess->gnb_n3_addr = test_self()->gnb1_addr;
+
+    sendbuf = testngap_build_handover_request_ack(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
     recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_HandoverPreparation,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_build_uplink_ran_status_transfer(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_DownlinkRANStatusTransfer,
+            test_ue->ngap_procedure_code);
+
+    test_ue->nr_tai = target_tai;
+    memcpy(&test_ue->nr_cgi.plmn_id,
+            &target_tai.plmn_id, OGS_PLMN_ID_LEN);
+    test_ue->nr_cgi.cell_id = 0x40001;
+    sendbuf = testngap_build_handover_notify(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    amf_ue_ngap_id = test_ue->amf_ue_ngap_id;
+    ran_ue_ngap_id = test_ue->ran_ue_ngap_id;
+
+    recvbuf = testgnb_ngap_read(ngap2);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_UEContextRelease,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_build_ue_context_release_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap2, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    test_ue->amf_ue_ngap_id = amf_ue_ngap_id;
+    test_ue->ran_ue_ngap_id = ran_ue_ngap_id;
+
+    /*
+     * Mobility Registration Update at AMF-h after the handover into the
+     * new TA (TS 23.502 4.9.1.3.3 step 12): the session stays active.
+     */
+    test_ue->nas.registration.value =
+        OGS_NAS_5GS_REGISTRATION_TYPE_MOBILITY_UPDATING;
+    memset(&test_ue->registration_request_param, 0,
+            sizeof(test_ue->registration_request_param));
+    test_ue->registration_request_param.guti = 1;
+    test_ue->registration_request_param.requested_nssai = 1;
+    test_ue->registration_request_param.last_visited_registered_tai = 1;
+    test_ue->registration_request_param.pdu_session_status = 1;
+    test_ue->registration_request_param.psimask.pdu_session_status =
+        1 << 5;
+    nasbuf = testgmm_build_registration_request(
+            test_ue, NULL, false, false);
+    ABTS_PTR_NOTNULL(tc, nasbuf);
+    gmmbuf = testgmm_build_registration_request(
+            test_ue, NULL, true, true);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    for (;;) {
+        recvbuf = testgnb_ngap_read(ngap1);
+        ABTS_PTR_NOTNULL(tc, recvbuf);
+        testngap_recv(test_ue, recvbuf);
+
+        if (test_ue->gmm_message_type == OGS_NAS_5GS_IDENTITY_REQUEST)
+            gmmbuf = testgmm_build_identity_response(test_ue);
+        else if (test_ue->gmm_message_type ==
+                OGS_NAS_5GS_AUTHENTICATION_REQUEST)
+            gmmbuf = testgmm_build_authentication_response(test_ue);
+        else if (test_ue->gmm_message_type ==
+                OGS_NAS_5GS_SECURITY_MODE_COMMAND)
+            gmmbuf = testgmm_build_security_mode_complete(test_ue, nasbuf);
+        else
+            break;
+
+        ABTS_PTR_NOTNULL(tc, gmmbuf);
+        sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+        ABTS_PTR_NOTNULL(tc, sendbuf);
+        rv = testgnb_ngap_send(ngap1, sendbuf);
+        ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    }
+
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_REGISTRATION_ACCEPT,
+            test_ue->gmm_message_type);
+    ABTS_INT_EQUAL(tc, 0x2000, test_ue->pdu_session_status);
+
+    gmmbuf = testgmm_build_registration_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, OGS_NAS_5GS_CONFIGURATION_UPDATE_COMMAND,
+            test_ue->gmm_message_type);
+
+    /* Same UE IP, now straight through the H-UPF N3 tunnel to gNB1 */
+    sess = test_sess_find_by_psi(test_ue, 5);
+    ogs_assert(sess);
+    qos_flow = test_qos_flow_find_by_qfi(sess, 1);
+    ogs_assert(qos_flow);
+    rv = test_gtpu_send_ping(gtpu1, qos_flow, TEST_PING_IPV4);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    for (;;) {
+        /* skip an end marker of the old path, if any */
+        recvbuf = testgnb_gtpu_read(gtpu1);
+        ABTS_PTR_NOTNULL(tc, recvbuf);
+        if (((ogs_gtp2_header_t *)recvbuf->data)->type !=
+                OGS_GTPU_MSGTYPE_END_MARKER)
+            break;
+        ogs_pkbuf_free(recvbuf);
+    }
+    ABTS_INT_EQUAL(tc, OGS_GTPU_MSGTYPE_GPDU,
+            ((ogs_gtp2_header_t *)recvbuf->data)->type);
+    ogs_pkbuf_free(recvbuf);
+
+    /* Release the NG context at AMF-h cleanly. */
+    sendbuf = testngap_build_ue_context_release_request(test_ue,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_user_inactivity, false);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     testngap_recv(test_ue, recvbuf);
     ABTS_INT_EQUAL(tc, NGAP_ProcedureCode_id_UEContextRelease,
@@ -454,7 +621,7 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
 
     sendbuf = testngap_build_ue_context_release_complete(test_ue);
     ABTS_PTR_NOTNULL(tc, sendbuf);
-    rv = testgnb_ngap_send(ngap2, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
     ogs_msleep(300);

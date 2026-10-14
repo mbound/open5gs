@@ -112,8 +112,8 @@ OpenAPI_list_t *amf_namf_comm_encode_ue_session_context_list(
     ogs_assert(PduSessionList);
 
     ogs_list_for_each(&amf_ue->sess_list, sess) {
-        ogs_sbi_nf_instance_t *serving_smf = NULL;
-        ogs_sbi_nf_instance_t *home_smf = NULL;
+        char *serving_smf_id = NULL;
+        char *home_smf_id = NULL;
 
         PduSessionContext = ogs_calloc(1, sizeof(*PduSessionContext));
         ogs_assert(PduSessionContext);
@@ -135,23 +135,23 @@ OpenAPI_list_t *amf_namf_comm_encode_ue_session_context_list(
          * retained H-SMF anchor from the V-SMF context that must be inserted
          * or changed during inter-PLMN N2 handover.
          */
-        serving_smf = OGS_SBI_GET_NF_INSTANCE(
-                sess->sbi.service_name_array[
-                    OpenAPI_service_name_nsmf_pdusession]);
-        home_smf = OGS_SBI_GET_NF_INSTANCE(
-                sess->sbi.home_nsmf_pdusession);
+        /*
+         * The NF instance IDs bound to the session, not the cached NF
+         * profiles: those expire with the NRF validity period while the
+         * session lives on.
+         */
+        serving_smf_id = sess->sbi.service_name_array[
+                    OpenAPI_service_name_nsmf_pdusession].nf_instance_id;
+        home_smf_id = sess->sbi.home_nsmf_pdusession.nf_instance_id;
 
         if (ogs_sbi_plmn_id_in_vplmn(&amf_ue->home_plmn_id) == true) {
-            if (serving_smf && serving_smf->id)
-                PduSessionContext->vsmf_id =
-                    ogs_strdup(serving_smf->id);
-            if (home_smf && home_smf->id)
-                PduSessionContext->hsmf_id =
-                    ogs_strdup(home_smf->id);
+            if (serving_smf_id)
+                PduSessionContext->vsmf_id = ogs_strdup(serving_smf_id);
+            if (home_smf_id)
+                PduSessionContext->hsmf_id = ogs_strdup(home_smf_id);
         } else {
-            if (serving_smf && serving_smf->id)
-                PduSessionContext->hsmf_id =
-                    ogs_strdup(serving_smf->id);
+            if (serving_smf_id)
+                PduSessionContext->hsmf_id = ogs_strdup(serving_smf_id);
         }
 
         sNSSAI->sst = sess->s_nssai.sst;
@@ -753,6 +753,53 @@ ogs_sbi_request_t *amf_namf_comm_build_release_ue_context(
     return request;
 }
 
+/* smfChangeInfoList: the sessions whose V-SMF this AMF removes */
+static OpenAPI_list_t *smf_change_info_list_build(amf_ue_t *amf_ue)
+{
+    amf_sess_t *sess = NULL;
+    OpenAPI_list_t *PduSessionIdList = NULL;
+    OpenAPI_list_t *SmfChangeInfoList = NULL;
+    OpenAPI_smf_change_info_t *SmfChangeInfo = NULL;
+
+    ogs_list_for_each(&amf_ue->sess_list, sess) {
+        double *psi = NULL;
+
+        if (!sess->inter_plmn_handover.v_smf_id)
+            continue;
+
+        if (!PduSessionIdList) {
+            PduSessionIdList = OpenAPI_list_create();
+            ogs_assert(PduSessionIdList);
+        }
+        psi = ogs_malloc(sizeof(*psi));
+        ogs_assert(psi);
+        *psi = sess->psi;
+        OpenAPI_list_add(PduSessionIdList, psi);
+    }
+    if (!PduSessionIdList)
+        return NULL;
+
+    SmfChangeInfo = OpenAPI_smf_change_info_create(
+            PduSessionIdList, OpenAPI_smf_change_indication_REMOVED);
+    ogs_assert(SmfChangeInfo);
+    SmfChangeInfoList = OpenAPI_list_create();
+    ogs_assert(SmfChangeInfoList);
+    OpenAPI_list_add(SmfChangeInfoList, SmfChangeInfo);
+
+    return SmfChangeInfoList;
+}
+
+static void smf_change_info_list_free(OpenAPI_list_t *SmfChangeInfoList)
+{
+    OpenAPI_lnode_t *node = NULL;
+
+    if (!SmfChangeInfoList)
+        return;
+    OpenAPI_list_for_each(SmfChangeInfoList, node)
+        OpenAPI_smf_change_info_free(node->data);
+    OpenAPI_list_free(SmfChangeInfoList);
+}
+
 ogs_sbi_request_t *amf_namf_callback_build_n2_info_notify(
         amf_ue_t *amf_ue, void *data)
 {
@@ -773,10 +820,14 @@ ogs_sbi_request_t *amf_namf_callback_build_n2_info_notify(
     notification.n2_notify_subscription_id = amf_ue->supi;
     notification.notify_reason =
         OpenAPI_n2_info_notify_reason_HANDOVER_COMPLETED;
+    /* TS 23.502 4.23.7.3.3 step 1 (step 6a): V-SMF removal indication */
+    notification.smf_change_info_list = smf_change_info_list_build(amf_ue);
     message.N2InformationNotification = &notification;
 
     request = ogs_sbi_build_request(&message);
     ogs_expect(request);
+
+    smf_change_info_list_free(notification.smf_change_info_list);
     return request;
 }
 
@@ -825,9 +876,6 @@ ogs_sbi_request_t *amf_namf_comm_build_registration_status_update(
     ogs_sbi_request_t *request = NULL;
 
     OpenAPI_ue_reg_status_update_req_data_t UeRegStatusUpdateReqData;
-    OpenAPI_smf_change_info_t *SmfChangeInfo = NULL;
-    OpenAPI_list_t *PduSessionIdList = NULL;
-    amf_sess_t *sess = NULL;
     char *ue_context_id = NULL;
 
     ogs_assert(amf_ue);
@@ -871,41 +919,14 @@ ogs_sbi_request_t *amf_namf_comm_build_registration_status_update(
          * HPLMN) is indicated so that the old AMF releases the SM context
          * at the V-SMF only (TS 29.518 5.2.2.2.2).
          */
-        ogs_list_for_each(&amf_ue->sess_list, sess) {
-            double *psi = NULL;
-
-            if (!sess->inter_plmn_handover.v_smf_id)
-                continue;
-
-            if (!PduSessionIdList) {
-                PduSessionIdList = OpenAPI_list_create();
-                ogs_assert(PduSessionIdList);
-            }
-            psi = ogs_malloc(sizeof(*psi));
-            ogs_assert(psi);
-            *psi = sess->psi;
-            OpenAPI_list_add(PduSessionIdList, psi);
-        }
-        if (PduSessionIdList) {
-            SmfChangeInfo = OpenAPI_smf_change_info_create(
-                    PduSessionIdList, OpenAPI_smf_change_indication_REMOVED);
-            ogs_assert(SmfChangeInfo);
-            UeRegStatusUpdateReqData.smf_change_info_list =
-                OpenAPI_list_create();
-            ogs_assert(UeRegStatusUpdateReqData.smf_change_info_list);
-            OpenAPI_list_add(
-                    UeRegStatusUpdateReqData.smf_change_info_list,
-                    SmfChangeInfo);
-        }
+        UeRegStatusUpdateReqData.smf_change_info_list =
+            smf_change_info_list_build(amf_ue);
     }
 
     request = ogs_sbi_build_request(&message);
     ogs_expect(request);
 
-    if (SmfChangeInfo) {
-        OpenAPI_list_free(UeRegStatusUpdateReqData.smf_change_info_list);
-        OpenAPI_smf_change_info_free(SmfChangeInfo);
-    }
+    smf_change_info_list_free(UeRegStatusUpdateReqData.smf_change_info_list);
 
     if (ue_context_id)
         ogs_free(ue_context_id);

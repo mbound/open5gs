@@ -1468,6 +1468,13 @@ int amf_nsmf_pdusession_handle_release_sm_context(
             ogs_assert(r != OGS_ERROR);
         }
 
+    } else if (state == AMF_RELEASE_SM_CONTEXT_VSMF_ONLY) {
+        /*
+         * The SM context at the V-SMF only (vsmfReleaseOnly): the PDU
+         * session lives on at the H-SMF under the new AMF. Nothing to do
+         * for this UE context, whatever its state.
+         */
+
     } else {
 
         if (AMF_SESSION_SYNC_DONE(amf_ue, state)) {
