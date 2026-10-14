@@ -1,8 +1,9 @@
 # VPLMN 001-01 (serving network for roaming 999-70 UEs, home-routed): every NF
 # of this PLMN reads this file. Derived from configs/examples/5gc-sepp2-001-01.yaml.in
-# and the VPLMN half of configs/inter-plmn-hr-n2.yaml.in, minus EPC/metrics. No
+# and the VPLMN half of configs/inter-plmn-hr-n2.yaml.in, minus EPC. No
 # AUSF/UDM: authentication and subscription data come from the HPLMN via the
 # SEPPs (TS 23.501 §4.2.4). Same FQDN scheme as 999-70.yaml; addresses: README.md.
+# AMF, SMF, UPF and PCF serve Prometheus metrics on :9090 (README.md, Monitoring and WebUI).
 db_uri: mongodb://mongodb-v/open5gs
 
 logger:
@@ -52,6 +53,10 @@ sepp:
             uri: http://172.30.3.10:7778
 
 amf:
+  metrics:              # /metrics + JSON info API, all interfaces (README: Monitoring)
+    server:
+      - address: 0.0.0.0
+        port: 9090
   sbi:
     server:
       - address: amf.5gc.mnc001.mcc001.3gppnetwork.org
@@ -95,6 +100,10 @@ amf:
       value: 540
 
 smf:
+  metrics:              # /metrics + JSON info API, all interfaces (README: Monitoring)
+    server:
+      - address: 0.0.0.0
+        port: 9090
   sbi:
     server:
       - address: smf.5gc.mnc001.mcc001.3gppnetwork.org
@@ -120,6 +129,10 @@ smf:
   mtu: 1400
 
 upf:
+  metrics:              # /metrics + JSON info API, all interfaces (README: Monitoring)
+    server:
+      - address: 0.0.0.0
+        port: 9090
   pfcp:
     server:
       - address: 172.30.2.7
@@ -143,6 +156,10 @@ udr:
 # UE-AMBR for AM policy from the PCF's own DB (src/pcf/nudr-handler.c), so
 # mongodb-v holds a copy of the roaming subscribers (scripts/provision.sh).
 pcf:
+  metrics:              # /metrics + JSON info API, all interfaces (README: Monitoring)
+    server:
+      - address: 0.0.0.0
+        port: 9090
   sbi:
     server:
       - address: pcf.5gc.mnc001.mcc001.3gppnetwork.org

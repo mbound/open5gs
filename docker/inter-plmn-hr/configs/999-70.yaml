@@ -1,10 +1,11 @@
 # HPLMN 999-70 (home of the test UEs): every NF of this PLMN reads this file
 # (`open5gs-<nf>d -c /etc/open5gs-hr/999-70.yaml`). Derived from
 # configs/examples/5gc-sepp1-999-70.yaml.in and the HPLMN half of
-# configs/inter-plmn-hr-n2.yaml.in (GUAMI pointer, t3512), minus EPC/metrics.
+# configs/inter-plmn-hr-n2.yaml.in (GUAMI pointer, t3512), minus EPC.
 # SBI servers bind to their 3GPP FQDN, a Docker alias on sbi-h, so the SCP sees
 # the target PLMN in every URI and sends foreign-PLMN requests to the SEPP
 # (TS 29.500 §6.10, TS 23.003 §28.3.2.3). Port omitted = 80. Addresses: README.md.
+# AMF, SMF, UPF and PCF serve Prometheus metrics on :9090 (README.md, Monitoring and WebUI).
 db_uri: mongodb://mongodb-h/open5gs
 
 logger:
@@ -54,6 +55,10 @@ sepp:
             uri: http://172.30.3.20:7778
 
 amf:
+  metrics:              # /metrics + JSON info API, all interfaces (README: Monitoring)
+    server:
+      - address: 0.0.0.0
+        port: 9090
   sbi:
     server:
       - address: amf.5gc.mnc070.mcc999.3gppnetwork.org
@@ -93,6 +98,10 @@ amf:
       value: 540
 
 smf:
+  metrics:              # /metrics + JSON info API, all interfaces (README: Monitoring)
+    server:
+      - address: 0.0.0.0
+        port: 9090
   sbi:
     server:
       - address: smf.5gc.mnc070.mcc999.3gppnetwork.org
@@ -116,6 +125,10 @@ smf:
   mtu: 1400
 
 upf:
+  metrics:              # /metrics + JSON info API, all interfaces (README: Monitoring)
+    server:
+      - address: 0.0.0.0
+        port: 9090
   pfcp:
     server:
       - address: 172.30.1.7
@@ -152,6 +165,10 @@ udr:
         - uri: http://scp.5gc.mnc070.mcc999.3gppnetwork.org
 
 pcf:                    # policy from the UDR (subscriber data written by open5gs-dbctl)
+  metrics:              # /metrics + JSON info API, all interfaces (README: Monitoring)
+    server:
+      - address: 0.0.0.0
+        port: 9090
   sbi:
     server:
       - address: pcf.5gc.mnc070.mcc999.3gppnetwork.org
