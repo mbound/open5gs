@@ -507,6 +507,7 @@ static void inter_plmn_hr_n2_cancel_preparation_func(abts_case *tc, void *data)
 
     uint64_t ran_ue_ngap_id;
     uint64_t amf_ue_ngap_id;
+    uint64_t target_ran_ue_ngap_id, target_amf_ue_ngap_id;
     ogs_5gs_tai_t target_tai;
 
     bson_t *doc = NULL;
@@ -763,6 +764,10 @@ static void inter_plmn_hr_n2_cancel_preparation_func(abts_case *tc, void *data)
      * (TS 38.413 8.4.5): AMF-v completes the cancel once AMF-h answers,
      * without a Handover Command.
      */
+    target_amf_ue_ngap_id = test_ue->amf_ue_ngap_id;
+    target_ran_ue_ngap_id = test_ue->ran_ue_ngap_id;
+    test_ue->amf_ue_ngap_id = amf_ue_ngap_id;
+    test_ue->ran_ue_ngap_id = ran_ue_ngap_id;
 
     sendbuf = testngap_build_handover_cancel(test_ue,
             NGAP_Cause_PR_radioNetwork,
@@ -773,6 +778,8 @@ static void inter_plmn_hr_n2_cancel_preparation_func(abts_case *tc, void *data)
 
     ogs_msleep(100);
 
+    test_ue->amf_ue_ngap_id = target_amf_ue_ngap_id;
+    test_ue->ran_ue_ngap_id = target_ran_ue_ngap_id;
     ogs_list_for_each(&test_ue->sess_list, sess)
         sess->gnb_n3_addr = test_self()->gnb2_addr;
     sendbuf = testngap_build_handover_request_ack(test_ue);
