@@ -519,7 +519,21 @@ void smf_5gc_n4_handle_session_modification_response(
                          * PFCP accepted the H-UPF N3->N9 switch. Promote the
                          * staged target V-SMF/V-UPF path only after N4
                          * commit succeeds.
+                         *
+                         * At a V-SMF insertion at registration this answers
+                         * the Create (still without N1, hsmf_handover is
+                         * pending) instead of an Update.
                          */
+                        if (sess->hsmf_handover.create_response) {
+                            sess->hsmf_handover.create_response = false;
+                            if (stream &&
+                                !smf_sbi_send_pdu_session_created_data(
+                                    sess, stream))
+                                ogs_error("[%d] Cannot answer the Create",
+                                        sess->psi);
+                            stream = NULL;
+                        }
+
                         memcpy(&sess->remote_dl_ip,
                                 &sess->hsmf_handover.target_vcn_ip,
                                 sizeof(sess->remote_dl_ip));

@@ -181,11 +181,16 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
          * TS 29.502 N2 handover preparation with V-SMF insertion/change:
          * this is an existing PDU session and the H-SMF must preserve the
          * current DL path until handover execution.
+         *
+         * At a registration (TS 23.502 4.23.4.3 step 8a, referenced by
+         * 4.23.3) the H-SMF switches the DL path at once.
          */
         PduSessionCreateData.request_type =
             OpenAPI_request_type_EXISTING_PDU_SESSION;
-        PduSessionCreateData.is_ho_preparation_indication = true;
-        PduSessionCreateData.ho_preparation_indication = true;
+        if (!VSMF_INSERTION_AT_REGISTRATION(sess)) {
+            PduSessionCreateData.is_ho_preparation_indication = true;
+            PduSessionCreateData.ho_preparation_indication = true;
+        }
     }
 
     header.service.name =

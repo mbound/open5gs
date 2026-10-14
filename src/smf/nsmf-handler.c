@@ -30,6 +30,7 @@ bool smf_nsmf_handle_create_sm_context(
 {
     bool rc;
     bool inter_plmn_handover = false;
+    bool registration_insertion = false;
     int r;
     smf_ue_t *smf_ue = NULL;
     smf_bearer_t *qos_flow = NULL;
@@ -87,7 +88,22 @@ bool smf_nsmf_handle_create_sm_context(
         SmContextCreateData->n2_sm_info_type ==
             OpenAPI_n2_sm_info_type_HANDOVER_REQUIRED;
 
-    if (inter_plmn_handover) {
+    /*
+     * V-SMF insertion at a mobility registration (TS 29.502 5.2.2.2.7):
+     * the SM Context ID at the H-SMF, no N1 and no handover.
+     */
+    registration_insertion =
+        !inter_plmn_handover &&
+        SmContextCreateData->sm_context_ref &&
+        SmContextCreateData->sm_context_smf_id &&
+        SmContextCreateData->sm_context_smf_plmn_id &&
+        SmContextCreateData->h_smf_uri &&
+        !SmContextCreateData->n1_sm_msg &&
+        SmContextCreateData->ho_state == OpenAPI_ho_state_NULL;
+
+    if (registration_insertion) {
+        sess->pti = OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED;
+    } else if (inter_plmn_handover) {
         n2SmInfo = SmContextCreateData->n2_sm_info;
         if (!n2SmInfo->content_id) {
             ogs_error("[%s:%d] No HandoverRequired content-id",
@@ -518,7 +534,7 @@ bool smf_nsmf_handle_create_sm_context(
         ogs_freeaddrinfo(addr6);
     }
 
-    if (inter_plmn_handover) {
+    if (inter_plmn_handover || registration_insertion) {
         /*
          * Target V-SMF insertion/change.  Preserve the source anchor
          * reference and the N2 HandoverRequired transfer while the complete
@@ -579,21 +595,23 @@ bool smf_nsmf_handle_create_sm_context(
             return false;
         }
 
-        sess->inter_plmn_handover.target_id =
-            OpenAPI_ng_ran_target_id_copy(
-                    NULL, SmContextCreateData->target_id);
-        if (!sess->inter_plmn_handover.target_id) {
-            ogs_error("[%s:%d] Cannot retain targetId",
-                    smf_ue->supi, sess->psi);
-            return false;
-        }
+        if (inter_plmn_handover) {
+            sess->inter_plmn_handover.target_id =
+                OpenAPI_ng_ran_target_id_copy(
+                        NULL, SmContextCreateData->target_id);
+            if (!sess->inter_plmn_handover.target_id) {
+                ogs_error("[%s:%d] Cannot retain targetId",
+                        smf_ue->supi, sess->psi);
+                return false;
+            }
 
-        sess->inter_plmn_handover.handover_required =
-            ogs_pkbuf_copy(n2smbuf);
-        if (!sess->inter_plmn_handover.handover_required) {
-            ogs_error("[%s:%d] Cannot retain HandoverRequired transfer",
-                    smf_ue->supi, sess->psi);
-            return false;
+            sess->inter_plmn_handover.handover_required =
+                ogs_pkbuf_copy(n2smbuf);
+            if (!sess->inter_plmn_handover.handover_required) {
+                ogs_error("[%s:%d] Cannot retain HandoverRequired transfer",
+                        smf_ue->supi, sess->psi);
+                return false;
+            }
         }
 
         /*
@@ -1803,7 +1821,9 @@ bool smf_nsmf_handle_create_data_in_hsmf(
         PduSessionCreateData->is_ho_preparation_indication &&
         PduSessionCreateData->ho_preparation_indication;
 
-    if (handover_preparation) {
+    if (handover_preparation ||
+        PduSessionCreateData->request_type ==
+            OpenAPI_request_type_EXISTING_PDU_SESSION) {
         ogs_ip_t target_vcn_ip;
 
         /*
@@ -1811,6 +1831,10 @@ bool smf_nsmf_handle_create_data_in_hsmf(
          * This POST prepares an already anchored PDU session.  Do not run
          * establishment/N1/UDM/policy procedures and do not switch the
          * active H-UPF downlink yet.
+         *
+         * Without hoPreparationIndication (V-SMF insertion at registration,
+         * TS 23.502 4.23.4.3 steps 8a-8c) the DL path is switched now and
+         * the Create is answered after the N4 modification (n4-handler.c).
          */
         if (PduSessionCreateData->request_type !=
                 OpenAPI_request_type_EXISTING_PDU_SESSION) {
@@ -1912,6 +1936,20 @@ bool smf_nsmf_handle_create_data_in_hsmf(
                 vcnTunnelInfo->ipv6_addr ?
                     vcnTunnelInfo->ipv6_addr : "NULL",
                 vcnTunnelInfo->gtp_teid);
+
+        if (!handover_preparation) {
+            sess->hsmf_handover.create_response = true;
+            sess->nsmf_param.request_indication =
+                OpenAPI_request_indication_PDU_SES_MOB;
+            smf_sess_hsmf_switch_to_target_vcn(sess);
+            ogs_assert(OGS_OK ==
+                smf_5gc_pfcp_send_all_pdr_modification_request(
+                    sess, stream,
+                    OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
+                    OGS_PFCP_MODIFY_DL_ONLY|
+                    OGS_PFCP_MODIFY_ACTIVATE, 0, 0));
+            return true;
+        }
 
         /*
          * Return the existing anchor parameters. The response helper omits

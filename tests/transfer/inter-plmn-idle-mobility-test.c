@@ -9,8 +9,16 @@
  * through the SEPPs (TS 23.502 4.2.2.2.2 steps 4-5, TS 29.518
  * Namf_Communication_UEContextTransfer), so it knows the SUPI and goes
  * straight to authentication. Without the context it would have to ask for
- * the identity (steps 6-7). The UE then goes idle again and returns to gNB1
- * with the 5G-GUTI of AMF-v: the same in the other direction.
+ * the identity (steps 6-7).
+ *
+ * The UE has a PDU session anchored at the H-SMF/H-UPF and reports it
+ * active in the PDU session status. AMF-v inserts a V-SMF for it (TS 23.502
+ * 4.23.1, 4.23.3 case d): the new V-SMF retrieves the SM context from the
+ * H-SMF and creates the N9 leg towards the retained H-UPF, so the session
+ * survives with the same UE IP address.
+ *
+ * The UE then goes idle again and returns to gNB1 with the 5G-GUTI of
+ * AMF-v: the same in the other direction.
  */
 
 #include "test-common.h"
@@ -19,13 +27,17 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
 {
     int rv;
     ogs_socknode_t *ngap1, *ngap2;
+    ogs_socknode_t *gtpu1, *gtpu2;
     ogs_pkbuf_t *gmmbuf;
+    ogs_pkbuf_t *gsmbuf;
     ogs_pkbuf_t *nasbuf;
     ogs_pkbuf_t *sendbuf;
     ogs_pkbuf_t *recvbuf;
 
     ogs_nas_5gs_mobile_identity_suci_t mobile_identity_suci;
     test_ue_t *test_ue = NULL;
+    test_sess_t *sess = NULL;
+    test_bearer_t *qos_flow = NULL;
     ogs_5gs_tai_t target_tai;
 
     bson_t *doc = NULL;
@@ -58,6 +70,10 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     ABTS_PTR_NOTNULL(tc, ngap1);
     ngap2 = testngap_client(2, AF_INET);
     ABTS_PTR_NOTNULL(tc, ngap2);
+    gtpu1 = test_gtpu_server(1, AF_INET);
+    ABTS_PTR_NOTNULL(tc, gtpu1);
+    gtpu2 = test_gtpu_server(2, AF_INET);
+    ABTS_PTR_NOTNULL(tc, gtpu2);
 
     /* NG Setup: gNB1 999-70 TAC 1 (AMF-h), gNB2 001-01 TAC 2 (AMF-v) */
     sendbuf = testngap_build_ng_setup_request_by_tai_plmn(0x4000, 28, 0, 0);
@@ -173,6 +189,49 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     ABTS_PTR_NOTNULL(tc, recvbuf);
     testngap_recv(test_ue, recvbuf);
 
+    /* PDU session at the H-SMF/H-UPF */
+    sess = test_sess_add_by_dnn_and_psi(test_ue, "internet", 5);
+    ogs_assert(sess);
+
+    sess->ul_nas_transport_param.request_type =
+        OGS_NAS_5GS_REQUEST_TYPE_INITIAL;
+    sess->ul_nas_transport_param.dnn = 1;
+    sess->ul_nas_transport_param.s_nssai = 1;
+
+    sess->pdu_session_establishment_param.ssc_mode = 1;
+    sess->pdu_session_establishment_param.epco = 1;
+
+    gsmbuf = testgsm_build_pdu_session_establishment_request(sess);
+    ABTS_PTR_NOTNULL(tc, gsmbuf);
+    gmmbuf = testgmm_build_ul_nas_transport(sess,
+            OGS_NAS_PAYLOAD_CONTAINER_N1_SM_INFORMATION, gsmbuf);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc,
+            NGAP_ProcedureCode_id_PDUSessionResourceSetup,
+            test_ue->ngap_procedure_code);
+
+    sendbuf = testngap_sess_build_pdu_session_resource_setup_response(sess);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    qos_flow = test_qos_flow_find_by_qfi(sess, 1);
+    ogs_assert(qos_flow);
+    ogs_msleep(100);
+    rv = test_gtpu_send_ping(gtpu1, qos_flow, TEST_PING_IPV4);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    recvbuf = testgnb_gtpu_read(gtpu1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    ogs_pkbuf_free(recvbuf);
+
     /* The UE goes idle: UE context release in gNB1 */
     sendbuf = testngap_build_ue_context_release_request(test_ue,
             NGAP_Cause_PR_radioNetwork,
@@ -221,6 +280,9 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     test_ue->registration_request_param.gmm_capability = 1;
     test_ue->registration_request_param.requested_nssai = 1;
     test_ue->registration_request_param.last_visited_registered_tai = 1;
+    test_ue->registration_request_param.pdu_session_status = 1;
+    test_ue->registration_request_param.psimask.pdu_session_status =
+        1 << sess->psi;
     nasbuf = testgmm_build_registration_request(test_ue, NULL, false, false);
     ABTS_PTR_NOTNULL(tc, nasbuf);
 
@@ -266,6 +328,8 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     testngap_recv(test_ue, recvbuf);
     ABTS_INT_EQUAL(tc, OGS_NAS_5GS_REGISTRATION_ACCEPT,
             test_ue->gmm_message_type);
+    /* The session survived the move with a V-SMF inserted */
+    ABTS_INT_EQUAL(tc, 0x2000, test_ue->pdu_session_status);
 
     gmmbuf = testgmm_build_registration_complete(test_ue);
     ABTS_PTR_NOTNULL(tc, gmmbuf);
@@ -383,6 +447,8 @@ static void inter_plmn_idle_mobility_func(abts_case *tc, void *data)
     /********** Remove Subscriber in Database */
     ABTS_INT_EQUAL(tc, OGS_OK, test_db_remove_ue(test_ue));
 
+    testgnb_gtpu_close(gtpu1);
+    testgnb_gtpu_close(gtpu2);
     testgnb_ngap_close(ngap1);
     testgnb_ngap_close(ngap2);
 

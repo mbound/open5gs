@@ -414,6 +414,9 @@ struct amf_ue_s {
     char            imeisv_bcd[OGS_MAX_IMEISV_BCD_LEN+1];
     ogs_nas_mobile_identity_imeisv_t nas_mobile_identity_imeisv;
 
+    /* Registration Accept waits for V-SMF insertion (nsmf-handler.c) */
+    bool            registration_accept_deferred;
+
     int             num_of_msisdn;
     char            *msisdn[OGS_MAX_NUM_OF_MSISDN];
 
@@ -865,6 +868,9 @@ typedef struct amf_sess_s {
      * The source SM context is not the live target-AMF SM context while a
      * V-SMF is being inserted/changed.  Keep it separately until the target
      * AMF has selected and created the visited SM context.
+     *
+     * Also used for V-SMF insertion at a mobility registration (TS 23.502
+     * 4.23.3 case d), then without handover_required/target_id.
      */
     struct {
         bool pending;
@@ -1263,6 +1269,11 @@ amf_sess_t *amf_sess_find_by_dnn(amf_ue_t *amf_ue, char *dnn);
 
 amf_ue_t *amf_ue_find_by_id(ogs_pool_id_t id);
 amf_sess_t *amf_sess_find_by_id(ogs_pool_id_t id);
+
+#define AMF_SESS_VSMF_INSERTION_AT_REGISTRATION(__sESS) \
+    ((__sESS)->inter_plmn_handover.pending && \
+     !(__sESS)->inter_plmn_handover.handover_required)
+bool amf_ue_vsmf_insertion_pending(amf_ue_t *amf_ue);
 
 #define AMF_SESSION_SYNC_DONE(__aMF, __sTATE) \
     (amf_sess_xact_state_count(__aMF, __sTATE) == 0)

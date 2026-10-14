@@ -313,13 +313,12 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
         ogs_assert(sess->inter_plmn_handover.source_sm_context_uri);
         ogs_assert(sess->inter_plmn_handover.source_smf_id);
         ogs_assert(sess->inter_plmn_handover.source_smf_plmn_id_presence);
-        ogs_assert(sess->inter_plmn_handover.handover_required);
-        ogs_assert(sess->inter_plmn_handover.target_id);
 
         /*
-         * TS 29.502 V-SMF insertion/change during N2 handover.
-         * The new visited SM context is created with a reference to the
-         * source SM context while the retained H-SMF remains the HR anchor.
+         * TS 29.502 V-SMF insertion/change during N2 handover (5.2.2.2.5)
+         * or registration (5.2.2.2.7). The new visited SM context is
+         * created with a reference to the source SM context while the
+         * retained H-SMF remains the HR anchor.
          */
         SmContextCreateData.sm_context_ref =
             sess->inter_plmn_handover.source_sm_context_uri;
@@ -333,6 +332,11 @@ ogs_sbi_request_t *amf_nsmf_pdusession_build_create_sm_context(
                     amf_ue->supi, sess->psi);
             goto end;
         }
+    }
+
+    if (sess->inter_plmn_handover.pending &&
+        !AMF_SESS_VSMF_INSERTION_AT_REGISTRATION(sess)) {
+        ogs_assert(sess->inter_plmn_handover.target_id);
 
         SmContextCreateData.ho_state = OpenAPI_ho_state_PREPARING;
         SmContextCreateData.target_id =

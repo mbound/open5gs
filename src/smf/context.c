@@ -1883,9 +1883,15 @@ smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message)
          * removing it here would tear down the PSA/H-UPF anchor that the
          * handover is required to preserve.
          */
-        if (PduSessionCreateData->is_ho_preparation_indication &&
-            PduSessionCreateData->ho_preparation_indication) {
-            ogs_info("Reuse anchor session for handover preparation "
+        /*
+         * TS 29.502 5.2.2.7.1: with requestType EXISTING_PDU_SESSION the
+         * SMF updates the existing PDU session, e.g. at a V-SMF insertion.
+         */
+        if ((PduSessionCreateData->is_ho_preparation_indication &&
+             PduSessionCreateData->ho_preparation_indication) ||
+            PduSessionCreateData->request_type ==
+                OpenAPI_request_type_EXISTING_PDU_SESSION) {
+            ogs_info("Reuse anchor session for V-SMF insertion "
                     "[SUPI:%s,PDU Session identity:%d]",
                     PduSessionCreateData->supi,
                     PduSessionCreateData->pdu_session_id);
@@ -2312,6 +2318,40 @@ smf_sess_t *smf_sess_find_by_charging_id(uint32_t charging_id)
 {
     ogs_assert(charging_id);
     return smf_sess_find(charging_id);
+}
+
+/*
+ * H-SMF: point the H-UPF at the staged target V-UPF N9 endpoint. The same
+ * PDR/FAR pair previously terminated N3 (or the old N9); after inter-PLMN
+ * mobility it terminates roaming N9 toward the V-UPF.
+ */
+void smf_sess_hsmf_switch_to_target_vcn(smf_sess_t *sess)
+{
+    smf_bearer_t *qos_flow = NULL;
+
+    ogs_assert(sess);
+
+    ogs_list_for_each(&sess->bearer_list, qos_flow) {
+        ogs_pfcp_far_t *dl_far = qos_flow->dl_far;
+        ogs_pfcp_pdr_t *ul_pdr = qos_flow->ul_pdr;
+
+        ogs_assert(dl_far);
+        ogs_assert(ul_pdr);
+
+        ul_pdr->src_if_type_presence = true;
+        ul_pdr->src_if_type = OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING;
+
+        dl_far->dst_if_type_presence = true;
+        dl_far->dst_if_type = OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING;
+        dl_far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
+
+        ogs_assert(OGS_OK == ogs_pfcp_ip_to_outer_header_creation(
+                    &sess->hsmf_handover.target_vcn_ip,
+                    &dl_far->outer_header_creation,
+                    &dl_far->outer_header_creation_len));
+        dl_far->outer_header_creation.teid =
+            sess->hsmf_handover.target_vcn_teid;
+    }
 }
 
 smf_sess_t *smf_sess_find_by_sm_context_ref(char *sm_context_ref)

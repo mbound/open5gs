@@ -2728,6 +2728,19 @@ amf_sess_t *amf_sess_find_by_id(ogs_pool_id_t id)
     return ogs_pool_find_by_id(&amf_sess_pool, id);
 }
 
+bool amf_ue_vsmf_insertion_pending(amf_ue_t *amf_ue)
+{
+    amf_sess_t *sess = NULL;
+
+    ogs_assert(amf_ue);
+
+    ogs_list_for_each(&amf_ue->sess_list, sess)
+        if (AMF_SESS_VSMF_INSERTION_AT_REGISTRATION(sess))
+            return true;
+
+    return false;
+}
+
 int amf_sess_xact_count(amf_ue_t *amf_ue)
 {
     amf_sess_t *sess = NULL;

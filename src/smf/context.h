@@ -660,6 +660,13 @@ typedef struct smf_sess_s {
      */
 #define INTER_PLMN_HANDOVER_IN_VSMF(__sESS) \
     ((__sESS) && (__sESS)->inter_plmn_handover.pending)
+    /*
+     * The same V-SMF insertion at a mobility registration (TS 29.502
+     * 5.2.2.2.7): no handover, so no target_id/handover_required.
+     */
+#define VSMF_INSERTION_AT_REGISTRATION(__sESS) \
+    (INTER_PLMN_HANDOVER_IN_VSMF(__sESS) && \
+     !(__sESS)->inter_plmn_handover.handover_required)
     struct {
         bool pending;
 
@@ -684,6 +691,11 @@ typedef struct smf_sess_s {
         uint32_t target_vcn_teid;
         char *target_vsmf_id;
         char *target_vsmf_pdu_session_uri;
+        /*
+         * V-SMF insertion at registration: the Create is answered once the
+         * H-UPF has switched to the new N9 path.
+         */
+        bool create_response;
     } hsmf_handover;
 
     /* Handover */
@@ -820,6 +832,7 @@ smf_sess_t *smf_sess_find_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type);
 smf_sess_t *smf_sess_find_by_psi(smf_ue_t *smf_ue, uint8_t psi);
 smf_sess_t *smf_sess_find_by_charging_id(uint32_t charging_id);
 smf_sess_t *smf_sess_find_by_sm_context_ref(char *sm_context_ref);
+void smf_sess_hsmf_switch_to_target_vcn(smf_sess_t *sess);
 smf_sess_t *smf_sess_find_by_pdu_session_ref(char *pdu_session_ref);
 smf_sess_t *smf_sess_find_by_ipv4(uint32_t addr);
 smf_sess_t *smf_sess_find_by_ipv6(uint32_t *addr6);

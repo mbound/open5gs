@@ -408,8 +408,6 @@ void smf_sbi_send_inter_plmn_handover_sm_context_created(
 
     ogs_assert(sess);
     ogs_assert(stream);
-    ogs_assert(n2smbuf);
-    ogs_assert(INTER_PLMN_HANDOVER_IN_VSMF(sess));
 
     memset(&SmContextCreatedData, 0, sizeof(SmContextCreatedData));
     memset(&n2SmInfo, 0, sizeof(n2SmInfo));
@@ -446,20 +444,25 @@ void smf_sbi_send_inter_plmn_handover_sm_context_created(
     sNssai.sd = ogs_s_nssai_sd_to_string(sess->s_nssai.sd);
     SmContextCreatedData.s_nssai = &sNssai;
 
-    SmContextCreatedData.up_cnx_state = OpenAPI_up_cnx_state_ACTIVATING;
-    SmContextCreatedData.ho_state = OpenAPI_ho_state_PREPARING;
+    /* No N2 SM information: V-SMF insertion at registration */
+    SmContextCreatedData.up_cnx_state = OpenAPI_up_cnx_state_DEACTIVATED;
 
-    n2SmInfo.content_id = (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
-    SmContextCreatedData.n2_sm_info = &n2SmInfo;
-    SmContextCreatedData.n2_sm_info_type =
-        OpenAPI_n2_sm_info_type_PDU_RES_SETUP_REQ;
+    if (n2smbuf) {
+        SmContextCreatedData.up_cnx_state = OpenAPI_up_cnx_state_ACTIVATING;
+        SmContextCreatedData.ho_state = OpenAPI_ho_state_PREPARING;
 
-    sendmsg.part[sendmsg.num_of_part].content_id =
-        (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
-    sendmsg.part[sendmsg.num_of_part].content_type =
-        (char *)OGS_SBI_CONTENT_NGAP_TYPE;
-    sendmsg.part[sendmsg.num_of_part].pkbuf = n2smbuf;
-    sendmsg.num_of_part++;
+        n2SmInfo.content_id = (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
+        SmContextCreatedData.n2_sm_info = &n2SmInfo;
+        SmContextCreatedData.n2_sm_info_type =
+            OpenAPI_n2_sm_info_type_PDU_RES_SETUP_REQ;
+
+        sendmsg.part[sendmsg.num_of_part].content_id =
+            (char *)OGS_SBI_CONTENT_NGAP_SM_ID;
+        sendmsg.part[sendmsg.num_of_part].content_type =
+            (char *)OGS_SBI_CONTENT_NGAP_TYPE;
+        sendmsg.part[sendmsg.num_of_part].pkbuf = n2smbuf;
+        sendmsg.num_of_part++;
+    }
 
     sendmsg.SmContextCreatedData = &SmContextCreatedData;
 
@@ -468,7 +471,8 @@ void smf_sbi_send_inter_plmn_handover_sm_context_created(
     ogs_assert(response);
     ogs_assert(true == ogs_sbi_server_send_response(stream, response));
 
-    ogs_pkbuf_free(n2smbuf);
+    if (n2smbuf)
+        ogs_pkbuf_free(n2smbuf);
     if (sNssai.sd)
         ogs_free(sNssai.sd);
     ogs_free(sendmsg.http.location);

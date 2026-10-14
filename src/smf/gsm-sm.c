@@ -1592,37 +1592,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                 break;
                             }
 
-                            ogs_list_for_each(
-                                    &sess->bearer_list, qos_flow) {
-                                ogs_pfcp_far_t *dl_far = qos_flow->dl_far;
-                                ogs_pfcp_pdr_t *ul_pdr = qos_flow->ul_pdr;
-
-                                ogs_assert(dl_far);
-                                ogs_assert(ul_pdr);
-
-                                /*
-                                 * The same H-UPF PDR/FAR pair previously
-                                 * terminated N3. After inter-PLMN mobility
-                                 * it terminates roaming N9 toward the V-UPF.
-                                 */
-                                ul_pdr->src_if_type_presence = true;
-                                ul_pdr->src_if_type =
-                                    OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING;
-
-                                dl_far->dst_if_type_presence = true;
-                                dl_far->dst_if_type =
-                                    OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING;
-                                dl_far->apply_action =
-                                    OGS_PFCP_APPLY_ACTION_FORW;
-
-                                ogs_assert(OGS_OK ==
-                                    ogs_pfcp_ip_to_outer_header_creation(
-                                        &sess->hsmf_handover.target_vcn_ip,
-                                        &dl_far->outer_header_creation,
-                                        &dl_far->outer_header_creation_len));
-                                dl_far->outer_header_creation.teid =
-                                    sess->hsmf_handover.target_vcn_teid;
-                            }
+                            smf_sess_hsmf_switch_to_target_vcn(sess);
 
                             ogs_assert(OGS_OK ==
                                 smf_5gc_pfcp_send_all_pdr_modification_request(
@@ -1769,13 +1739,11 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     break;
                 DEFAULT
                     if (sbi_message->PduSessionCreateData &&
-                        sbi_message->PduSessionCreateData->
-                            is_ho_preparation_indication &&
-                        sbi_message->PduSessionCreateData->
-                            ho_preparation_indication) {
+                        sbi_message->PduSessionCreateData->request_type ==
+                            OpenAPI_request_type_EXISTING_PDU_SESSION) {
                         if (smf_nsmf_handle_create_data_in_hsmf(
                                 sess, stream, sbi_message) == false) {
-                            ogs_error("[%s:%d] H-SMF handover preparation "
+                            ogs_error("[%s:%d] H-SMF V-SMF insertion "
                                     "Create failed",
                                     smf_ue->supi, sess->psi);
                         }
@@ -2192,6 +2160,21 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                     smf_ue->supi, sess->psi,
                                     sbi_message->res_status);
                             OGS_FSM_TRAN(s, smf_gsm_state_exception);
+                        } else if (e->h.sbi.state ==
+                                SMF_CREATE_STATE_INTER_PLMN_HANDOVER &&
+                                VSMF_INSERTION_AT_REGISTRATION(sess)) {
+                            /*
+                             * The H-SMF switched to the new N9 path. The
+                             * user plane stays deactivated until the UE
+                             * activates it (TS 29.502 5.2.2.2.7).
+                             */
+                            sess->inter_plmn_handover.pending = false;
+                            sess->up_cnx_state =
+                                OpenAPI_up_cnx_state_DEACTIVATED;
+                            smf_sbi_send_inter_plmn_handover_sm_context_created(
+                                    sess, stream, NULL);
+                            ogs_info("[%d] V-SMF inserted at registration",
+                                    sess->psi);
                         } else if (e->h.sbi.state ==
                                 SMF_CREATE_STATE_INTER_PLMN_HANDOVER &&
                                 INTER_PLMN_HANDOVER_IN_VSMF(sess)) {

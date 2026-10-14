@@ -3425,10 +3425,15 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
 
                     ogs_assert(amf_ue->nas.message_type ==
                             OGS_NAS_5GS_REGISTRATION_REQUEST);
-                    CLEAR_AMF_UE_TIMER(amf_ue->t3550);
-                    r = nas_5gs_send_registration_accept(amf_ue);
-                    ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
+                    if (amf_ue_vsmf_insertion_pending(amf_ue)) {
+                        /* Sent when the V-SMF(s) answer, nsmf-handler.c */
+                        amf_ue->registration_accept_deferred = true;
+                    } else {
+                        CLEAR_AMF_UE_TIMER(amf_ue->t3550);
+                        r = nas_5gs_send_registration_accept(amf_ue);
+                        ogs_expect(r == OGS_OK);
+                        ogs_assert(r != OGS_ERROR);
+                    }
 
                     /* In nsmf-handler.c
                      *

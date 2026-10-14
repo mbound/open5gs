@@ -376,7 +376,7 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_update(
         ran_ue_t *ran_ue, amf_ue_t *amf_ue,
         ogs_nas_5gs_registration_request_t *registration_request)
 {
-    amf_sess_t *sess = NULL;
+    amf_sess_t *sess = NULL, *next_sess = NULL;
     uint16_t psimask;
     int i = 0, served_tai_index = 0;
 
@@ -518,6 +518,36 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_update(
                 }
             }
         }
+    }
+
+    /*
+     * TS 23.502 4.23.3 step 17 case d: for a session anchored at an H-SMF
+     * of another PLMN, the AMF in the VPLMN creates the SM context at a new
+     * V-SMF with the SM Context ID at the H-SMF (TS 29.502 5.2.2.2.7). The
+     * Registration Accept waits for the result (nsmf-handler.c).
+     */
+    ogs_list_for_each_safe(&amf_ue->sess_list, next_sess, sess) {
+        if (!AMF_SESS_VSMF_INSERTION_AT_REGISTRATION(sess) ||
+            ogs_list_count(&sess->sbi.xact_list))
+            continue;
+
+        if (amf_ue->nas.present.pdu_session_status) {
+            psimask = 0;
+            psimask |= pdu_session_status->psi << 8;
+            psimask |= pdu_session_status->psi >> 8;
+
+            /*
+             * Inactive in the UE: dropped here only, the H-SMF keeps it
+             * until it is released there.
+             */
+            if ((psimask & (1 << sess->psi)) == 0) {
+                AMF_SESS_CLEAR(sess);
+                continue;
+            }
+        }
+
+        if (amf_sbi_start_inter_plmn_handover(ran_ue, sess) != OGS_OK)
+            AMF_SESS_CLEAR(sess);
     }
 
     if ((registration_request->presencemask &

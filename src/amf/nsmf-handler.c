@@ -25,6 +25,26 @@
 
 #include "gmm-build.h"
 
+/*
+ * TS 23.502 4.2.2.2.2 steps 17 and 21: the Registration Accept follows the
+ * SM context creation at the inserted V-SMF(s).
+ */
+static void vsmf_insertion_done(amf_ue_t *amf_ue)
+{
+    int r;
+
+    if (!amf_ue->registration_accept_deferred ||
+        amf_ue_vsmf_insertion_pending(amf_ue))
+        return;
+
+    amf_ue->registration_accept_deferred = false;
+
+    CLEAR_AMF_UE_TIMER(amf_ue->t3550);
+    r = nas_5gs_send_registration_accept(amf_ue);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
+}
+
 int amf_nsmf_pdusession_handle_create_sm_context(
         amf_ue_t *amf_ue, ran_ue_t *ran_ue, amf_sess_t *sess,
         int state, ogs_sbi_message_t *recvmsg)
@@ -149,6 +169,14 @@ int amf_nsmf_pdusession_handle_create_sm_context(
 
         ogs_sbi_header_free(&header);
 
+        if (state == AMF_CREATE_SM_CONTEXT_REGISTRATION_REQUEST) {
+            ogs_info("[%s:%d] V-SMF inserted [%s]",
+                    amf_ue->supi, sess->psi, sess->sm_context_resource_uri);
+            sess->inter_plmn_handover.pending = false;
+            vsmf_insertion_done(amf_ue);
+            return OGS_OK;
+        }
+
         if (state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER) {
             OpenAPI_sm_context_created_data_t *CreatedData = NULL;
             OpenAPI_ref_to_binary_data_t *n2SmInfo = NULL;
@@ -231,6 +259,20 @@ int amf_nsmf_pdusession_handle_create_sm_context(
         }
 
     } else {
+        if (state == AMF_CREATE_SM_CONTEXT_REGISTRATION_REQUEST) {
+            /*
+             * The session is not reported active in the Registration
+             * Accept. It is removed here, before that is sent, rather than
+             * by the caller on an error return.
+             */
+            ogs_error("[%s:%d] V-SMF insertion failed [HTTP:%d]",
+                    amf_ue->supi, sess->psi, recvmsg->res_status);
+            sess->inter_plmn_handover.pending = false;
+            AMF_SESS_CLEAR(sess);
+            vsmf_insertion_done(amf_ue);
+            return OGS_OK;
+        }
+
         if (state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER) {
             ogs_error("[%s:%d] Target V-SMF handover preparation failed "
                     "[HTTP:%d]",

@@ -2871,6 +2871,16 @@ static void amf_namf_comm_decode_ue_session_context_list(
                 ogs_sbi_header_free(&header);
                 continue;
             }
+        } else if (!amf_ue->handover.inter_amf_target &&
+                ogs_sbi_plmn_id_in_vplmn(&amf_ue->home_plmn_id) &&
+                PduSessionContext->hsmf_id && !PduSessionContext->vsmf_id) {
+            /*
+             * Idle mode mobility from the HPLMN into this VPLMN: the
+             * session is anchored at the H-SMF without a V-SMF. Insert a
+             * V-SMF (TS 23.502 4.23.1, 4.23.3 case d) at the registration
+             * update, see gmm_handle_registration_update().
+             */
+            insert_vsmf = true;
         }
 
         sess = amf_sess_add(amf_ue, PduSessionContext->pdu_session_id);
@@ -2885,9 +2895,10 @@ static void amf_namf_comm_decode_ue_session_context_list(
         amf_ue->nas.access_type = (int)PduSessionContext->access_type;
 
         if (insert_vsmf) {
-            memcpy(&amf_ue->home_plmn_id,
-                    &amf_ue->handover.source_plmn_id,
-                    OGS_PLMN_ID_LEN);
+            if (inter_plmn)
+                memcpy(&amf_ue->home_plmn_id,
+                        &amf_ue->handover.source_plmn_id,
+                        OGS_PLMN_ID_LEN);
 
             sess->inter_plmn_handover.pending = true;
             sess->inter_plmn_handover.source_sm_context_uri =
@@ -2896,13 +2907,12 @@ static void amf_namf_comm_decode_ue_session_context_list(
                 ogs_strdup(PduSessionContext->hsmf_id);
             sess->inter_plmn_handover.source_smf_plmn_id_presence = true;
             memcpy(&sess->inter_plmn_handover.source_smf_plmn_id,
-                    &amf_ue->handover.source_plmn_id,
-                    OGS_PLMN_ID_LEN);
+                    &amf_ue->home_plmn_id, OGS_PLMN_ID_LEN);
             sess->inter_plmn_handover.h_smf_id =
                 ogs_strdup(PduSessionContext->hsmf_id);
 
-            ogs_info("[%s:%d] Inter-PLMN HR handover: retain H-SMF [%s] "
-                    "and insert target V-SMF",
+            ogs_info("[%s:%d] Inter-PLMN mobility: retain H-SMF [%s] "
+                    "and insert V-SMF",
                     amf_ue->supi, sess->psi,
                     sess->inter_plmn_handover.h_smf_id);
 

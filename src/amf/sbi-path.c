@@ -654,7 +654,9 @@ static int client_discover_cb(
 
     if (next_state == AMF_CREATE_SM_CONTEXT_NO_STATE &&
         sess->inter_plmn_handover.pending)
-        next_state = AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER;
+        next_state = AMF_SESS_VSMF_INSERTION_AT_REGISTRATION(sess) ?
+            AMF_CREATE_SM_CONTEXT_REGISTRATION_REQUEST :
+            AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER;
 
     if (next_state == AMF_SMF_SELECTION_IN_HPLMN_IN_HOME_ROUTED) {
 
@@ -681,7 +683,8 @@ static int client_discover_cb(
         ogs_sbi_discovery_option_free(v_discovery_option);
 
     } else if (next_state == AMF_CREATE_SM_CONTEXT_NO_STATE ||
-               next_state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER) {
+               next_state == AMF_CREATE_SM_CONTEXT_INTER_PLMN_HANDOVER ||
+               next_state == AMF_CREATE_SM_CONTEXT_REGISTRATION_REQUEST) {
 
         r = amf_sess_sbi_discover_and_send(
                 service_name, v_discovery_option,
