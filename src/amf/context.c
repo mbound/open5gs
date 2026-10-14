@@ -2653,19 +2653,7 @@ void amf_sess_remove(amf_sess_t *sess)
     if (sess->sm_context.client)
         ogs_sbi_client_remove(sess->sm_context.client);
 
-    if (sess->inter_plmn_handover.source_sm_context_uri)
-        ogs_free(sess->inter_plmn_handover.source_sm_context_uri);
-    if (sess->inter_plmn_handover.source_smf_id)
-        ogs_free(sess->inter_plmn_handover.source_smf_id);
-    if (sess->inter_plmn_handover.h_smf_id)
-        ogs_free(sess->inter_plmn_handover.h_smf_id);
-    if (sess->inter_plmn_handover.v_smf_id)
-        ogs_free(sess->inter_plmn_handover.v_smf_id);
-    if (sess->inter_plmn_handover.handover_required)
-        ogs_pkbuf_free(sess->inter_plmn_handover.handover_required);
-    if (sess->inter_plmn_handover.target_id)
-        OpenAPI_ng_ran_target_id_free(
-                sess->inter_plmn_handover.target_id);
+    amf_sess_clear_inter_plmn_handover(sess);
 
     if (sess->payload_container)
         ogs_pkbuf_free(sess->payload_container);
@@ -2726,6 +2714,33 @@ amf_ue_t *amf_ue_find_by_id(ogs_pool_id_t id)
 amf_sess_t *amf_sess_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&amf_sess_pool, id);
+}
+
+/*
+ * The V-SMF insertion/removal of the session is done: the SM context at
+ * the (new) serving SMF is the live one. Nothing of the relocation may be
+ * applied again, e.g. to a later CreateSMContext for the same PSI.
+ */
+void amf_sess_clear_inter_plmn_handover(amf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    if (sess->inter_plmn_handover.source_sm_context_uri)
+        ogs_free(sess->inter_plmn_handover.source_sm_context_uri);
+    if (sess->inter_plmn_handover.source_smf_id)
+        ogs_free(sess->inter_plmn_handover.source_smf_id);
+    if (sess->inter_plmn_handover.h_smf_id)
+        ogs_free(sess->inter_plmn_handover.h_smf_id);
+    if (sess->inter_plmn_handover.v_smf_id)
+        ogs_free(sess->inter_plmn_handover.v_smf_id);
+    if (sess->inter_plmn_handover.handover_required)
+        ogs_pkbuf_free(sess->inter_plmn_handover.handover_required);
+    if (sess->inter_plmn_handover.target_id)
+        OpenAPI_ng_ran_target_id_free(
+                sess->inter_plmn_handover.target_id);
+
+    memset(&sess->inter_plmn_handover, 0,
+            sizeof(sess->inter_plmn_handover));
 }
 
 bool amf_ue_vsmf_insertion_pending(amf_ue_t *amf_ue)

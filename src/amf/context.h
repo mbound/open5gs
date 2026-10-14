@@ -1279,6 +1279,7 @@ amf_sess_t *amf_sess_find_by_id(ogs_pool_id_t id);
     ((__sESS)->inter_plmn_handover.pending && \
      !(__sESS)->inter_plmn_handover.handover_required)
 bool amf_ue_vsmf_insertion_pending(amf_ue_t *amf_ue);
+void amf_sess_clear_inter_plmn_handover(amf_sess_t *sess);
 
 #define AMF_SESSION_SYNC_DONE(__aMF, __sTATE) \
     (amf_sess_xact_state_count(__aMF, __sTATE) == 0)

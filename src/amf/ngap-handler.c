@@ -5253,6 +5253,10 @@ void ngap_handle_handover_notification(
         if (amf_sbi_send_inter_amf_handover_complete(amf_ue) != true)
             ogs_error("[%s] Failed to send HANDOVER_COMPLETED to source AMF",
                     amf_ue->supi ? amf_ue->supi : "Unknown");
+
+        /* The V-SMF insertion/removal indication has been used */
+        ogs_list_for_each(&amf_ue->sess_list, sess)
+            amf_sess_clear_inter_plmn_handover(sess);
     }
 
     /* Save the number of ongoing SMF transactions before processing sessions */

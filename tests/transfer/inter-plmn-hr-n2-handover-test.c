@@ -605,6 +605,48 @@ static void inter_plmn_hr_n2_handover_func(abts_case *tc, void *data)
             ((ogs_gtp2_header_t *)recvbuf->data)->type);
     ogs_pkbuf_free(recvbuf);
 
+    /*
+     * The relocation state of the session is done with: a new PDU session
+     * establishment with the same PSI (old session released as duplicate)
+     * is an ordinary one, not another V-SMF removal.
+     */
+    sess->ul_nas_transport_param.request_type =
+        OGS_NAS_5GS_REQUEST_TYPE_INITIAL;
+    sess->ul_nas_transport_param.dnn = 1;
+    sess->ul_nas_transport_param.s_nssai = 1;
+    sess->pdu_session_establishment_param.ssc_mode = 1;
+    sess->pdu_session_establishment_param.epco = 1;
+
+    gsmbuf = testgsm_build_pdu_session_establishment_request(sess);
+    ABTS_PTR_NOTNULL(tc, gsmbuf);
+    gmmbuf = testgmm_build_ul_nas_transport(sess,
+            OGS_NAS_PAYLOAD_CONTAINER_N1_SM_INFORMATION, gsmbuf);
+    ABTS_PTR_NOTNULL(tc, gmmbuf);
+    sendbuf = testngap_build_uplink_nas_transport(test_ue, gmmbuf);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    /* N2 SM information from the H-SMF, not a rejected 5GSM message */
+    recvbuf = testgnb_ngap_read(ngap1);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    testngap_recv(test_ue, recvbuf);
+    ABTS_TRUE(tc, test_ue->ngap_procedure_code ==
+                NGAP_ProcedureCode_id_PDUSessionResourceSetup ||
+            test_ue->ngap_procedure_code ==
+                NGAP_ProcedureCode_id_InitialContextSetup);
+
+    if (test_ue->ngap_procedure_code ==
+            NGAP_ProcedureCode_id_InitialContextSetup)
+        sendbuf = testngap_build_initial_context_setup_response(
+                test_ue, true);
+    else
+        sendbuf = testngap_sess_build_pdu_session_resource_setup_response(
+                sess);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testgnb_ngap_send(ngap1, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
     /* Release the NG context at AMF-h cleanly. */
     sendbuf = testngap_build_ue_context_release_request(test_ue,
             NGAP_Cause_PR_radioNetwork,

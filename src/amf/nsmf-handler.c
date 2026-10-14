@@ -172,7 +172,7 @@ int amf_nsmf_pdusession_handle_create_sm_context(
         if (state == AMF_CREATE_SM_CONTEXT_REGISTRATION_REQUEST) {
             ogs_info("[%s:%d] SM context created [%s]",
                     amf_ue->supi, sess->psi, sess->sm_context_resource_uri);
-            sess->inter_plmn_handover.pending = false;
+            amf_sess_clear_inter_plmn_handover(sess);
             vsmf_insertion_done(amf_ue);
             return OGS_OK;
         }
@@ -267,7 +267,7 @@ int amf_nsmf_pdusession_handle_create_sm_context(
              */
             ogs_error("[%s:%d] V-SMF insertion failed [HTTP:%d]",
                     amf_ue->supi, sess->psi, recvmsg->res_status);
-            sess->inter_plmn_handover.pending = false;
+            amf_sess_clear_inter_plmn_handover(sess);
             AMF_SESS_CLEAR(sess);
             vsmf_insertion_done(amf_ue);
             return OGS_OK;
