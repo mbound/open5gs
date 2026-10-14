@@ -91,7 +91,8 @@ routing in the UPF.
 | ue-h / ue-v | | | | .31 / .32 | UERANSIM UEs imsi-999700000000002 / ...003 |
 | ho-test | .50 | | | .50 (+ .51) | `inter-plmn-hr-n2` test binary as gNB1/gNB2 + UEs imsi-999700000000020/030 (profile `ho`) |
 
-All subnets are `172.30.{1,2,3,4}.0/24`. No host ports are published.
+All subnets are `172.30.{1,2,3,4}.0/24`. Only the optional `monitoring` and `webui` profiles
+publish host ports (see Monitoring and WebUI).
 
 ## Build
 
@@ -210,6 +211,71 @@ terrestrial `gnb-v.yaml`. After updating the tree, rebuild the image with
 It prints `PASS`/`FAIL` per step and `== RESULT: PASS` (exit code 0) at the end. A UE with
 RAT restrictions that is accepted gets them in the Mobility Restriction List of Initial
 Context Setup Request and Handover Request (TS 38.413 9.3.1.85). UERANSIM ignores that list.
+
+## Monitoring and WebUI
+
+Two opt-in compose profiles; both publish their ports on `$BIND_ADDR` (default `127.0.0.1`,
+so use an SSH port forward from another machine, or `BIND_ADDR=0.0.0.0`).
+
+```sh
+MONITORING=1 WEBUI=1 scripts/up.sh                        # from scratch, with both profiles
+docker compose --profile monitoring --profile webui up -d   # add them to a running deployment
+```
+
+| Service | Profile | Host port (env, default) | Login |
+|---|---|---|---|
+| Grafana | `monitoring` | `GRAFANA_PORT` 13000 | anonymous viewer; admin / `$GRAFANA_ADMIN_PASSWORD` (default `open5gs`) |
+| Prometheus | `monitoring` | `PROMETHEUS_PORT` 19190 | none |
+| WebUI-h (mongodb-h, HPLMN subscribers) | `webui` | `WEBUI_H_PORT` 9999 | admin / 1423 |
+| WebUI-v (mongodb-v, the V-PCF's copy) | `webui` | `WEBUI_V_PORT` 9998 | admin / 1423 |
+
+**Metrics.** The AMF, SMF, UPF and PCF of both PLMNs serve Prometheus metrics on `:9090`
+(`metrics:` in `configs/*.yaml`, address `0.0.0.0`; config changes need a restart of the NF).
+Prometheus (`monitoring/prometheus.yml`, 5 s scrape, 24 h retention) scrapes the eight
+endpoints as job `open5gs` with labels `plmn="999-70"|"001-01"` and `nf="amf"|"smf"|"upf"|"pcf"`;
+`up{job="open5gs"}` shows which are reachable (the VPLMN targets are down without the
+`vplmn` profile).
+
+**Dashboard.** Grafana opens on the provisioned "Open5GS 5GC" dashboard
+(`monitoring/dashboards/open5gs-5gc.json`). Every panel repeats on the `plmn` variable, so
+999-70 and 001-01 sit side by side; one row per NF:
+
+| Row | Panel | Metrics |
+|---|---|---|
+| AMF | gNBs, UEs, registered subscribers | `gnb` (NG Setup done), `ran_ue`, `fivegs_amffunction_rm_registeredsubnbr`, `amf_session` |
+| AMF | registrations per minute | `fivegs_amffunction_rm_reg{init,mob,period}{req,succ,fail}` |
+| AMF | registration success ratio (5 min) | succ / req per registration type |
+| AMF | authentication per minute | `fivegs_amffunction_amf_auth{req,fail,reject}` |
+| SMF | sessions, UEs, QoS flows, PFCP | `fivegs_smffunction_sm_sessionnbr`, `ues_active`, `fivegs_smffunction_sm_qos_flow_nbr`, `pfcp_sessions_active`, `pfcp_peers_active` |
+| SMF | PDU session creation per minute | `fivegs_smffunction_sm_pdusessioncreation{req,succ,fail}` |
+| UPF | sessions, QoS flows, PFCP peers | `fivegs_upffunction_upf_sessionnbr`, `fivegs_upffunction_upf_qosflows`, `pfcp_peers_active` |
+| PCF | policy associations | `fivegs_pcffunction_pa_policy{am,sm}asso{req,succ}`, `fivegs_pcffunction_pa_sessionnbr` |
+
+In a home-routed session the V-SMF/V-UPF count the roamer's session as well as the H-SMF/H-UPF.
+
+**JSON info API.** The same `:9090` servers answer `/gnb-info`, `/ue-info` (AMF) and
+`/pdu-info` (SMF), paged with `?page=N&page_size=M`
+(`docs/_docs/tutorial/07-infoAPI-UE-gNB-session-data.md`). From inside the networks, e.g.
+from the Prometheus container:
+
+```sh
+docker compose exec prometheus wget -qO- http://amf-h:9090/gnb-info   # gnb-h, its TAs, UE count
+docker compose exec prometheus wget -qO- http://amf-v:9090/ue-info    # roamers on 001-01
+docker compose exec prometheus wget -qO- http://smf-h:9090/pdu-info   # sessions, IPs, QoS flows
+```
+
+**AMF PLMN API.** The AMF also serves `namf-oam/v1/plmns` on its SBI (HTTP/2,
+`http://amf.5gc.mnc070.mcc999.3gppnetwork.org/namf-oam/v1/plmns` on sbi-h) to list, add and
+delete served PLMNs at run time; see `docs/_docs/tutorial/08-AMF-API-addAndDelete-new-PLMN.md`.
+
+**WebUI.** One WebUI per subscriber DB, built from this tree's `webui/` with
+`docker/webui/Dockerfile` (image `$USER/open5gs-webui`, rebuilt from the cache on each `up`).
+`scripts/up.sh` creates the `admin` account in both DBs with upstream's
+`docs/assets/webui/mongo-init.js` (only when no account exists); without `scripts/up.sh`, run
+`docker compose exec -T mongodb-h mongosh < ../../docs/assets/webui/mongo-init.js` (same for
+mongodb-v). WebUI-h shows the `scripts/provision.sh` subscribers and edits what UDR-h serves.
+WebUI-v edits mongodb-v, which only the V-PCF reads (Known issues), so subscribers added there
+cannot register.
 
 ## Known issues and limits
 

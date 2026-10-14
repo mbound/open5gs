@@ -5,6 +5,8 @@
 # (home-routed roaming). Exit code 0 only if both UEs pass.
 #   REBUILD=1 scripts/up.sh    rebuild all images without the Docker build cache
 #   NINJA_JOBS=N               build parallelism of the Open5GS build (default 4)
+#   MONITORING=1               also start Prometheus + Grafana (profile monitoring)
+#   WEBUI=1                    also start the WebUIs of both PLMNs (profile webui)
 cd "$(dirname "$0")/.." || exit 1
 set -e
 t0=$(date +%s)
@@ -23,8 +25,11 @@ build build $img-build $built   # a new base image needs a new build image
 build ueransim ${USER:-open5gs}/ueransim
 t1=$(date +%s)
 
-echo "== starting containers"
-docker compose --profile vplmn up -d
+profiles="--profile vplmn"
+[ "${MONITORING:-0}" = 1 ] && profiles="$profiles --profile monitoring"
+[ "${WEBUI:-0}" = 1 ] && profiles="$profiles --profile webui"
+echo "== starting containers ($profiles)"
+docker compose $profiles up -d
 # wait_for SECONDS WHAT CMD...: poll CMD every 2 s
 wait_for() {
   n=$1 what=$2; shift 2
@@ -36,6 +41,8 @@ wait_for() {
 registered() { [ "$(docker compose logs nrf-$1 2>/dev/null | grep -c 'NF registered \[Heartbeat')" -ge "$2" ]; }
 for db in mongodb-h mongodb-v; do
   wait_for 120 "$db" docker compose exec -T $db mongosh --quiet --eval 'db.runCommand({ping: 1})'
+  # WebUI login admin/1423 (upstream docs/assets/webui/mongo-init.js; only if no account exists)
+  docker compose exec -T $db mongosh --quiet < ../../docs/assets/webui/mongo-init.js >/dev/null
 done
 # HPLMN: scp sepp amf smf ausf udm pcf nssf bsf udr; VPLMN: scp sepp amf smf pcf nssf udr
 wait_for 180 "NF registrations at nrf-h" registered h 10

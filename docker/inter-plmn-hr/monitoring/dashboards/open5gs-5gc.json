@@ -1,0 +1,815 @@
+{
+ "uid": "open5gs-5gc",
+ "title": "Open5GS 5GC",
+ "tags": [
+  "open5gs"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "refresh": "10s",
+ "time": {
+  "from": "now-1h",
+  "to": "now"
+ },
+ "editable": true,
+ "description": "AMF, SMF, UPF and PCF metrics of both PLMNs, side by side (repeat on $plmn).",
+ "templating": {
+  "list": [
+   {
+    "name": "plmn",
+    "label": "PLMN",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "open5gs-prometheus"
+    },
+    "query": {
+     "query": "label_values(up{job=\"open5gs\"}, plmn)",
+     "refId": "plmn"
+    },
+    "definition": "label_values(up{job=\"open5gs\"}, plmn)",
+    "multi": true,
+    "includeAll": true,
+    "current": {
+     "text": [
+      "All"
+     ],
+     "value": [
+      "$__all"
+     ]
+    },
+    "refresh": 2,
+    "sort": 2
+   }
+  ]
+ },
+ "panels": [
+  {
+   "type": "row",
+   "title": "AMF",
+   "id": 1,
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "id": 2,
+   "title": "AMF: gNBs, UEs, registered subscribers ($plmn)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "open5gs-prometheus"
+   },
+   "repeat": "plmn",
+   "repeatDirection": "h",
+   "maxPerRow": 2,
+   "gridPos": {
+    "x": 0,
+    "y": 1,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 0,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(gnb{plmn=\"$plmn\",nf=\"amf\"})",
+     "legendFormat": "gNBs (NG Setup)"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(ran_ue{plmn=\"$plmn\",nf=\"amf\"})",
+     "legendFormat": "ran_ue (UEs with an NGAP context)"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(fivegs_amffunction_rm_registeredsubnbr{plmn=\"$plmn\",nf=\"amf\"})",
+     "legendFormat": "registered subscribers"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(amf_session{plmn=\"$plmn\",nf=\"amf\"})",
+     "legendFormat": "amf_session (PDU sessions)"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "id": 3,
+   "title": "AMF: registrations per minute ($plmn)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "open5gs-prometheus"
+   },
+   "repeat": "plmn",
+   "repeatDirection": "h",
+   "maxPerRow": 2,
+   "gridPos": {
+    "x": 0,
+    "y": 9,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "decimals": 2,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 0,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_rm_reginitreq{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "initial req"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_rm_reginitsucc{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "initial succ"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_rm_reginitfail{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "initial fail"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_rm_regmobreq{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "mobility req"
+    },
+    {
+     "refId": "E",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_rm_regmobsucc{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "mobility succ"
+    },
+    {
+     "refId": "F",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_rm_regmobfail{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "mobility fail"
+    },
+    {
+     "refId": "G",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_rm_regperiodreq{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "periodic req"
+    },
+    {
+     "refId": "H",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_rm_regperiodsucc{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "periodic succ"
+    },
+    {
+     "refId": "I",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_rm_regperiodfail{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "periodic fail"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "id": 4,
+   "title": "AMF: registration success ratio (5 min) ($plmn)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "open5gs-prometheus"
+   },
+   "repeat": "plmn",
+   "repeatDirection": "h",
+   "maxPerRow": 2,
+   "gridPos": {
+    "x": 0,
+    "y": 17,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 0,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(increase(fivegs_amffunction_rm_reginitsucc{plmn=\"$plmn\",nf=\"amf\"}[5m])) / sum(increase(fivegs_amffunction_rm_reginitreq{plmn=\"$plmn\",nf=\"amf\"}[5m]))",
+     "legendFormat": "initial"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(increase(fivegs_amffunction_rm_regmobsucc{plmn=\"$plmn\",nf=\"amf\"}[5m])) / sum(increase(fivegs_amffunction_rm_regmobreq{plmn=\"$plmn\",nf=\"amf\"}[5m]))",
+     "legendFormat": "mobility"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(increase(fivegs_amffunction_rm_regperiodsucc{plmn=\"$plmn\",nf=\"amf\"}[5m])) / sum(increase(fivegs_amffunction_rm_regperiodreq{plmn=\"$plmn\",nf=\"amf\"}[5m]))",
+     "legendFormat": "periodic"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "id": 5,
+   "title": "AMF: authentication per minute ($plmn)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "open5gs-prometheus"
+   },
+   "repeat": "plmn",
+   "repeatDirection": "h",
+   "maxPerRow": 2,
+   "gridPos": {
+    "x": 0,
+    "y": 25,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "decimals": 2,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 0,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_amf_authreq{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "auth req"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_amf_authfail{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "auth failure (from UE)"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_amffunction_amf_authreject{plmn=\"$plmn\",nf=\"amf\"}[1m]))",
+     "legendFormat": "auth reject"
+    }
+   ]
+  },
+  {
+   "type": "row",
+   "title": "SMF",
+   "id": 6,
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 33,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "id": 7,
+   "title": "SMF: sessions, UEs, QoS flows, PFCP ($plmn)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "open5gs-prometheus"
+   },
+   "repeat": "plmn",
+   "repeatDirection": "h",
+   "maxPerRow": 2,
+   "gridPos": {
+    "x": 0,
+    "y": 34,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 0,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(fivegs_smffunction_sm_sessionnbr{plmn=\"$plmn\",nf=\"smf\"})",
+     "legendFormat": "PDU sessions"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(ues_active{plmn=\"$plmn\",nf=\"smf\"})",
+     "legendFormat": "ues_active"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(fivegs_smffunction_sm_qos_flow_nbr{plmn=\"$plmn\",nf=\"smf\"})",
+     "legendFormat": "QoS flows"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(pfcp_sessions_active{plmn=\"$plmn\",nf=\"smf\"})",
+     "legendFormat": "PFCP sessions"
+    },
+    {
+     "refId": "E",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(pfcp_peers_active{plmn=\"$plmn\",nf=\"smf\"})",
+     "legendFormat": "PFCP peers"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "id": 8,
+   "title": "SMF: PDU session creation per minute ($plmn)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "open5gs-prometheus"
+   },
+   "repeat": "plmn",
+   "repeatDirection": "h",
+   "maxPerRow": 2,
+   "gridPos": {
+    "x": 0,
+    "y": 42,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "decimals": 2,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 0,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_smffunction_sm_pdusessioncreationreq{plmn=\"$plmn\",nf=\"smf\"}[1m]))",
+     "legendFormat": "req"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_smffunction_sm_pdusessioncreationsucc{plmn=\"$plmn\",nf=\"smf\"}[1m]))",
+     "legendFormat": "succ"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_smffunction_sm_pdusessioncreationfail{plmn=\"$plmn\",nf=\"smf\"}[1m]))",
+     "legendFormat": "fail"
+    }
+   ]
+  },
+  {
+   "type": "row",
+   "title": "UPF",
+   "id": 9,
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 50,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "id": 10,
+   "title": "UPF: sessions, QoS flows, PFCP peers ($plmn)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "open5gs-prometheus"
+   },
+   "repeat": "plmn",
+   "repeatDirection": "h",
+   "maxPerRow": 2,
+   "gridPos": {
+    "x": 0,
+    "y": 51,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 0,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(fivegs_upffunction_upf_sessionnbr{plmn=\"$plmn\",nf=\"upf\"})",
+     "legendFormat": "sessions"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(fivegs_upffunction_upf_qosflows{plmn=\"$plmn\",nf=\"upf\"})",
+     "legendFormat": "QoS flows"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(pfcp_peers_active{plmn=\"$plmn\",nf=\"upf\"})",
+     "legendFormat": "PFCP peers"
+    }
+   ]
+  },
+  {
+   "type": "row",
+   "title": "PCF",
+   "id": 11,
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 59,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "id": 12,
+   "title": "PCF: policy associations per minute ($plmn)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "open5gs-prometheus"
+   },
+   "repeat": "plmn",
+   "repeatDirection": "h",
+   "maxPerRow": 2,
+   "gridPos": {
+    "x": 0,
+    "y": 60,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "decimals": 2,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 0,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_pcffunction_pa_policyamassoreq{plmn=\"$plmn\",nf=\"pcf\"}[1m]))",
+     "legendFormat": "AM req"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_pcffunction_pa_policyamassosucc{plmn=\"$plmn\",nf=\"pcf\"}[1m]))",
+     "legendFormat": "AM succ"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_pcffunction_pa_policysmassoreq{plmn=\"$plmn\",nf=\"pcf\"}[1m]))",
+     "legendFormat": "SM req"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "60 * sum(rate(fivegs_pcffunction_pa_policysmassosucc{plmn=\"$plmn\",nf=\"pcf\"}[1m]))",
+     "legendFormat": "SM succ"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "id": 13,
+   "title": "PCF: active SM policy associations ($plmn)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "open5gs-prometheus"
+   },
+   "repeat": "plmn",
+   "repeatDirection": "h",
+   "maxPerRow": 2,
+   "gridPos": {
+    "x": 0,
+    "y": 68,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 0,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "open5gs-prometheus"
+     },
+     "expr": "sum(fivegs_pcffunction_pa_sessionnbr{plmn=\"$plmn\",nf=\"pcf\"})",
+     "legendFormat": "sessions"
+    }
+   ]
+  }
+ ]
+}

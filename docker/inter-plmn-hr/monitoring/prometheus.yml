@@ -1,0 +1,25 @@
+# Prometheus of the monitoring profile: the metrics servers (:9090) of the AMF, SMF, UPF and
+# PCF of both PLMNs, labelled plmn and nf. VPLMN targets are down while the vplmn profile is off.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: open5gs
+    static_configs:
+      - targets: [ "amf-h:9090" ]
+        labels: { plmn: "999-70", nf: amf }
+      - targets: [ "smf-h:9090" ]
+        labels: { plmn: "999-70", nf: smf }
+      - targets: [ "upf-h:9090" ]
+        labels: { plmn: "999-70", nf: upf }
+      - targets: [ "pcf-h:9090" ]
+        labels: { plmn: "999-70", nf: pcf }
+      - targets: [ "amf-v:9090" ]
+        labels: { plmn: "001-01", nf: amf }
+      - targets: [ "smf-v:9090" ]
+        labels: { plmn: "001-01", nf: smf }
+      - targets: [ "upf-v:9090" ]
+        labels: { plmn: "001-01", nf: upf }
+      - targets: [ "pcf-v:9090" ]
+        labels: { plmn: "001-01", nf: pcf }

@@ -4,7 +4,8 @@
 #   docker compose --profile images build base build ueransim   # images (once per source change)
 #   docker compose up -d                                 # HPLMN 999-70 + gnb-h/ue-h
 #   docker compose --profile vplmn up -d                 # + VPLMN 001-01 + gnb-v/ue-v
-# No host ports are published.
+#   docker compose --profile monitoring --profile webui up -d   # + Prometheus/Grafana, WebUIs
+# Only the monitoring and webui profiles publish host ports, on $BIND_ADDR (default 127.0.0.1).
 name: open5gs-hr
 
 x-nf: &nf
@@ -20,6 +21,13 @@ x-upf-cmd: &upf-cmd
   - |
     ip tuntap add name ogstun mode tun && ip addr add $$UE_GW dev ogstun && ip link set ogstun up
     exec open5gs-upfd -c $$CFG
+x-webui: &webui
+  build: { context: ../../, dockerfile: docker/webui/Dockerfile }
+  image: ${USER:-open5gs}/open5gs-webui
+  pull_policy: build
+  profiles: [ webui ]
+  restart: unless-stopped
+  cpus: 1
 x-ran: &ran
   image: ${USER:-open5gs}/ueransim
   restart: unless-stopped
@@ -226,6 +234,43 @@ services:
         ip addr add 172.30.4.51/24 dev $$(ip -o -4 addr show | awk '/172.30.4.50/ {print $$2}')
         exec /open5gs/build/tests/transfer/inter-plmn-hr-n2 -c /etc/open5gs-hr/ho-test.yaml "$$@"
       - ho-test
+
+  # ------------------------------------------------------------ monitoring (README.md)
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    profiles: [ monitoring ]
+    restart: unless-stopped
+    cpus: 1
+    command: [ --config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.path=/prometheus, --storage.tsdb.retention.time=24h ]
+    volumes: [ "./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro" ]
+    ports: [ "${BIND_ADDR:-127.0.0.1}:${PROMETHEUS_PORT:-19190}:9090" ]
+    networks: [ sbi-h, sbi-v ]
+  grafana:
+    image: grafana/grafana:10.4.0
+    profiles: [ monitoring ]
+    restart: unless-stopped
+    cpus: 1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-open5gs}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/open5gs-5gc.json
+    volumes: [ "./monitoring:/etc/grafana/provisioning:ro" ]
+    ports: [ "${BIND_ADDR:-127.0.0.1}:${GRAFANA_PORT:-13000}:3000" ]
+    networks: [ sbi-h ]
+    depends_on: [ prometheus ]
+
+  # ------------------------------------------------------------ WebUI per PLMN (README.md)
+  webui-h:
+    <<: *webui
+    environment: { DB_URI: "mongodb://mongodb-h/open5gs", WAIT_HOSTS: "mongodb-h:27017", HOSTNAME: 0.0.0.0 }
+    ports: [ "${BIND_ADDR:-127.0.0.1}:${WEBUI_H_PORT:-9999}:9999" ]
+    networks: [ sbi-h ]
+  webui-v:
+    <<: *webui
+    environment: { DB_URI: "mongodb://mongodb-v/open5gs", WAIT_HOSTS: "mongodb-v:27017", HOSTNAME: 0.0.0.0 }
+    ports: [ "${BIND_ADDR:-127.0.0.1}:${WEBUI_V_PORT:-9998}:9999" ]
+    networks: [ sbi-v ]
 
   # one-shot tools: docker compose run --rm dbctl open5gs-dbctl ...
   dbctl:
