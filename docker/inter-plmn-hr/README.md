@@ -293,5 +293,10 @@ cannot register.
 - N9 GTP-U uses the `ran` network (both UPFs have one GTP-U address).
 - UERANSIM only selects a non-home PLMN listed as equivalent; `ueransim/Dockerfile` drops
   that condition (see above). UERANSIM gNBs/UEs do not reconnect to restarted AMFs.
+- Metrics: after many PDU session releases `fivegs_smffunction_sm_qos_flow_nbr`,
+  `fivegs_upffunction_upf_sessionnbr` and `fivegs_pcffunction_pa_sessionnbr` read higher than
+  the SMF's session count (`fivegs_smffunction_sm_sessionnbr`, `pfcp_sessions_active` and
+  `/pdu-info` agree with each other). The AMF and SMF gauges count every UE context the core
+  still holds, including ones a UE left without deregistering.
 - No handover cancel test; NTN -> TN (back to the HPLMN) handover is not implemented in the
   branch.
