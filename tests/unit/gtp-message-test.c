@@ -420,10 +420,30 @@ static void gtp1_mm_context_test(abts_case *tc, void *data)
             memcmp(redec.imeisv, dec.imeisv, dec.imeisv_len));
 }
 
+/* Check the on-wire GTPv2-C type assignments shared by S10 and N26.
+ * IE codecs and mobility state machines are tested separately when added. */
+static void gtp2_mobility_type_test(abts_case *tc, void *data)
+{
+    ABTS_INT_EQUAL(tc, 128, OGS_GTP2_IDENTIFICATION_REQUEST_TYPE);
+    ABTS_INT_EQUAL(tc, 129, OGS_GTP2_IDENTIFICATION_RESPONSE_TYPE);
+    ABTS_INT_EQUAL(tc, 130, OGS_GTP2_CONTEXT_REQUEST_TYPE);
+    ABTS_INT_EQUAL(tc, 131, OGS_GTP2_CONTEXT_RESPONSE_TYPE);
+    ABTS_INT_EQUAL(tc, 132, OGS_GTP2_CONTEXT_ACKNOWLEDGE_TYPE);
+    ABTS_INT_EQUAL(tc, 133, OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE);
+    ABTS_INT_EQUAL(tc, 134, OGS_GTP2_FORWARD_RELOCATION_RESPONSE_TYPE);
+    ABTS_INT_EQUAL(tc, 135, OGS_GTP2_FORWARD_RELOCATION_COMPLETE_NOTIFICATION_TYPE);
+    ABTS_INT_EQUAL(tc, 136, OGS_GTP2_FORWARD_RELOCATION_COMPLETE_ACKNOWLEDGE_TYPE);
+    ABTS_INT_EQUAL(tc, 137, OGS_GTP2_FORWARD_ACCESS_CONTEXT_NOTIFICATION_TYPE);
+    ABTS_INT_EQUAL(tc, 138, OGS_GTP2_FORWARD_ACCESS_CONTEXT_ACKNOWLEDGE_TYPE);
+    ABTS_INT_EQUAL(tc, 139, OGS_GTP2_RELOCATION_CANCEL_REQUEST_TYPE);
+    ABTS_INT_EQUAL(tc, 140, OGS_GTP2_RELOCATION_CANCEL_RESPONSE_TYPE);
+}
+
 abts_suite *test_gtp_message(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
 
+    abts_run_test(suite, gtp2_mobility_type_test, NULL);
     abts_run_test(suite, gtp_message_test1, NULL);
     abts_run_test(suite, gtp1_mm_context_test, NULL);
 
