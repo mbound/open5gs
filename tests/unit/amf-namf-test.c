@@ -43,18 +43,16 @@ static bool transfer_send(ogs_sbi_stream_t *stream,
 #define amf_namf_comm_handle_ue_context_transfer_response transfer_import
 #define amf_namf_comm_handle_registration_status_update_request transfer_status_request
 #define amf_namf_comm_handle_registration_status_update_response transfer_status_response
-/* M3 introduced additional public Namf handlers. Rename all definitions
- * compiled into this test translation unit to avoid colliding with libamf. */
-#define amf_namf_callback_handle_n2_info_notify transfer_n2_info_notify
-#define amf_namf_comm_complete_release_ue_context transfer_complete_release
-#define amf_namf_comm_fail_create_ue_context transfer_fail_create
-#define amf_namf_comm_handle_create_ue_context_request transfer_create_request
-#define amf_namf_comm_handle_create_ue_context_response transfer_create_response
-#define amf_namf_comm_handle_release_ue_context_request transfer_release_request
+/* Test-only reinclusion to remap selected handlers; the unremapped
+ * inter-AMF declarations are intentionally repeated. */
+#define amf_namf_comm_handle_create_ue_context_request transfer_create_ue_context_request
+#define amf_namf_comm_fail_create_ue_context transfer_fail_create_ue_context
+#define amf_namf_comm_complete_release_ue_context transfer_complete_release_ue_context
+#define amf_namf_comm_handle_release_ue_context_request transfer_release_ue_context_request
+#define amf_namf_comm_send_create_ue_context_response transfer_send_create_ue_context_response
+#define amf_namf_comm_handle_create_ue_context_response transfer_create_ue_context_response
 #define amf_namf_comm_release_vsmf_only transfer_release_vsmf_only
-#define amf_namf_comm_send_create_ue_context_response transfer_send_create_response
-/* This test deliberately reincludes the header after renaming selected
- * functions to exercise the production implementation in isolation. */
+#define amf_namf_callback_handle_n2_info_notify transfer_n2_info_notify
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wredundant-decls"
 #undef AMF_NAMF_HANDLER_H
@@ -77,8 +75,10 @@ static void unverified_request_omits_seaf(abts_case *tc, void *data)
 
         transfer_ue = ogs_calloc(1, sizeof(*transfer_ue));
         ogs_assert(transfer_ue);
+        /* Keep the fixture consistent with amf_ue_add(). */
         transfer_ue->rat_restrictions = OpenAPI_list_create();
         ogs_assert(transfer_ue->rat_restrictions);
+        ogs_list_init(&transfer_ue->sess_list);
         transfer_ue->supi = "imsi-001010000000001";
         transfer_ue->auth_result = OpenAPI_auth_result_AUTHENTICATION_SUCCESS;
         transfer_ue->nas.access_type = OGS_ACCESS_TYPE_3GPP;
@@ -146,6 +146,7 @@ static void import_owns_stored_identifier(abts_case *tc, void *data)
         ogs_assert(ue && json);
         ue->rat_restrictions = OpenAPI_list_create();
         ogs_assert(ue->rat_restrictions);
+        ogs_list_init(&ue->sess_list);
         response.UeContextTransferRspData =
             OpenAPI_ue_context_transfer_rsp_data_parseFromJSON(json);
         ogs_assert(response.UeContextTransferRspData);

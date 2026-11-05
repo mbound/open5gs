@@ -2521,11 +2521,9 @@ static int amf_namf_comm_decode_ue_context(
             amf_ue->nas.amf.tsc =
                 (UeContext->seaf_data->ng_ksi->tsc ==
                  OpenAPI_sc_type_NATIVE) ? 0 : 1;
-            /*
-             * SEAF carries the AMF's current ngKSI. Do not overwrite
-             * the UE-reported ngKSI; it is restored independently by
-             * the transferred MM context when present.
-             */
+            /* The transferred ngKSI identifies the AMF security context.
+             * Preserve the UE-reported KSI until the corresponding NAS
+             * procedure has processed or validated it. */
             amf_ue->nas.amf.ksi = (uint8_t)UeContext->seaf_data->ng_ksi->ksi;
 
             if (ogs_ascii_to_hex_checked(

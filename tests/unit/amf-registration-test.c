@@ -229,17 +229,15 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e);
 #define amf_sess_have_session_release_pending registration_sess_release_pending
 #define amf_sbi_xact_ctx_s registration_xact_ctx_s
 #define amf_sbi_xact_ctx_t registration_xact_ctx_t
-/* M3 added SBI helpers not known by the upstream embedded-source test.
- * Map them to distinct test-local names to avoid linker symbol collisions. */
-#define amf_ue_sbi_discover_and_send_handover registration_real_ue_handover
-#define amf_sess_sbi_discover_and_send_handover registration_real_sess_handover
-#define amf_sbi_start_vsmf_removal registration_real_vsmf_removal
-#define amf_sbi_start_inter_plmn_handover registration_real_interplmn_ho
-#define amf_sbi_send_inter_amf_handover_complete registration_real_ho_complete
-#define amf_sbi_send_inter_amf_handover_cancel registration_real_ho_cancel
-#define amf_sbi_send_inter_amf_ran_status_transfer registration_real_ran_status
-/* This test deliberately reincludes the header after renaming selected
- * functions to exercise the production implementation in isolation. */
+/* Test-only reinclusion for function interposition; preserve
+ * fork-specific handover declarations without redundant-decls errors. */
+#define amf_ue_sbi_discover_and_send_handover registration_ue_send_handover
+#define amf_sess_sbi_discover_and_send_handover registration_sess_send_handover
+#define amf_sbi_start_vsmf_removal registration_vsmf_removal
+#define amf_sbi_start_inter_plmn_handover registration_inter_plmn_handover
+#define amf_sbi_send_inter_amf_ran_status_transfer registration_ran_status_transfer
+#define amf_sbi_send_inter_amf_handover_cancel registration_handover_cancel
+#define amf_sbi_send_inter_amf_handover_complete registration_handover_complete
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wredundant-decls"
 #undef AMF_SBI_PATH_H
