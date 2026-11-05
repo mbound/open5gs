@@ -1410,14 +1410,11 @@ int amf_gnb_set_gnb_id(amf_gnb_t *gnb, uint32_t gnb_id, uint8_t gnb_id_length)
 
     /*
      * A reconnect can register the same gNB-ID before the old association's
-     * shutdown event is handled. Keep the existing last-registration-wins
-     * mapping, but also replace the key pointer: plain ogs_hash_set() would
-     * retain &old_gnb->gnb_id even though its value now points to this
-     * context. Freeing or reusing the old context could then break lookups
-     * (including handover target lookup), even with owner-checked removal.
+     * shutdown event is handled: the last registration wins. The hash keeps
+     * its own copy of the key, so freeing or reusing the old context does not
+     * break lookups (including handover target lookup).
      */
-    ogs_hash_set_rekey(self.gnb_id_hash,
-            &gnb->gnb_id, sizeof(gnb->gnb_id), gnb);
+    ogs_hash_set(self.gnb_id_hash, &gnb->gnb_id, sizeof(gnb->gnb_id), gnb);
 
     gnb->gnb_id_presence = true;
 
@@ -1816,6 +1813,7 @@ amf_ue_t *amf_ue_add(ran_ue_t *ran_ue)
     amf_ue->handover.release_ue_context_stream_id = OGS_INVALID_POOL_ID;
     amf_ue->nas.access_type = OGS_ACCESS_TYPE_3GPP;
     amf_ue->nas.amf.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
+    amf_ue->nas.ue.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
     amf_ue->abba_len = 2;
 
     amf_ue_fsm_init(amf_ue);
@@ -2263,7 +2261,11 @@ static bool amf_namf_comm_parse_guti(ogs_nas_5gs_guti_t *guti, char *ue_context_
     memset(&plmn_id, 0, sizeof(plmn_id));
     ogs_sbi_parse_plmn_id(&plmn_id, &Plmn_id);
     ogs_nas_from_plmn_id(&guti->nas_plmn_id, &plmn_id);
-    ogs_amf_id_from_string(&guti->amf_id, amf_id_string);
+    if (!ogs_amf_id_from_string(&guti->amf_id, amf_id_string)) {
+        ogs_error("Invalid AMF ID [%s] in UE context ID [%s]",
+                amf_id_string, ue_context_id);
+        return false;
+    }
 
     guti->m_tmsi = (u_int32_t)strtol(tmsi_string, NULL, 16);
     return true;
@@ -3040,6 +3042,10 @@ void amf_ue_save_memento(amf_ue_t *amf_ue, amf_ue_memento_t *memento)
     ogs_assert(amf_ue);
     ogs_assert(memento);
 
+    memento->ue_ksi = amf_ue->nas.ue.ksi;
+    memento->ue_tsc = amf_ue->nas.ue.tsc;
+    memento->amf_ksi = amf_ue->nas.amf.ksi;
+    memento->amf_tsc = amf_ue->nas.amf.tsc;
     memcpy(&memento->ue_security_capability, &amf_ue->ue_security_capability,
            sizeof(memento->ue_security_capability));
     memcpy(&memento->ue_network_capability, &amf_ue->ue_network_capability,
@@ -3068,6 +3074,10 @@ void amf_ue_restore_memento(amf_ue_t *amf_ue, const amf_ue_memento_t *memento)
     ogs_assert(amf_ue);
     ogs_assert(memento);
 
+    amf_ue->nas.ue.ksi = memento->ue_ksi;
+    amf_ue->nas.ue.tsc = memento->ue_tsc;
+    amf_ue->nas.amf.ksi = memento->amf_ksi;
+    amf_ue->nas.amf.tsc = memento->amf_tsc;
     memcpy(&amf_ue->ue_security_capability, &memento->ue_security_capability,
            sizeof(amf_ue->ue_security_capability));
     memcpy(&amf_ue->ue_network_capability, &memento->ue_network_capability,

@@ -60,6 +60,16 @@ static uint8_t esm_cause_from_gtp(uint8_t gtp_cause)
     return OGS_NAS_ESM_CAUSE_NETWORK_FAILURE;
 }
 
+static void gtp_update_bearer_xact_delete(ogs_gtp_xact_t *xact)
+{
+    mme_bearer_t *bearer = NULL;
+
+    bearer = mme_bearer_find_by_id(OGS_POINTER_TO_UINT(xact->peer_data));
+    if (bearer && ogs_list_exists(
+                &bearer->update.xact_list, &xact->to_update_node))
+        ogs_list_remove(&bearer->update.xact_list, &xact->to_update_node);
+}
+
 static void gtp_remote_peer_timeout(ogs_gtp_xact_t *xact, void *data)
 {
     char buf[OGS_ADDRSTRLEN];
@@ -844,10 +854,19 @@ void mme_s11_handle_delete_session_response(
         /* No Action to be taken after sessions are deleted during
          * MME Initiated detach. S1 will be cleared after receipt
          * of the detach accept from UE */
-    } else if (action == OGS_GTP_DELETE_SEND_AUTHENTICATION_REQUEST) {
-        if (mme_sess_count(mme_ue) == 1) /* Last Session */ {
-            mme_s6a_send_air(enb_ue, mme_ue, NULL);
+    } else if (action == OGS_GTP_DELETE_SEND_UPDATE_LOCATION_REQUEST) {
+        bool continue_attach = mme_ue->attach_session_delete_pending &&
+            mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST &&
+            OGS_FSM_CHECK(&mme_ue->sm, emm_state_initial_context_setup) &&
+            enb_ue && ENB_UE_IS_SERVING(mme_ue, enb_ue);
+
+        MME_SESS_CLEAR(sess);
+        if (!mme_sess_count(mme_ue)) {
+            mme_ue->attach_session_delete_pending = false;
+            if (continue_attach)
+                mme_s6a_send_ulr(enb_ue, mme_ue, 0);
         }
+        return;
 
     } else if (action == OGS_GTP_DELETE_SEND_DETACH_ACCEPT) {
         if (mme_sess_count(mme_ue) == 1) /* Last Session */ {
@@ -1280,6 +1299,7 @@ void mme_s11_handle_update_bearer_request(
 
     xact->peer_cb = gtp_remote_peer_timeout;
     xact->peer_data = OGS_UINT_TO_POINTER(bearer->id);
+    xact->delete_cb = gtp_update_bearer_xact_delete;
 
     ogs_list_add(&bearer->update.xact_list, &xact->to_update_node);
 

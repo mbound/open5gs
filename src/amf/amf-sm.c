@@ -449,54 +449,8 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                 break;
 
             CASE(OGS_SBI_RESOURCE_NAME_SUBSCRIPTIONS)
-                subscription_data = e->h.sbi.data;
-                ogs_assert(subscription_data);
-
-                SWITCH(sbi_message.h.method)
-                CASE(OGS_SBI_HTTP_METHOD_POST)
-                    if (sbi_message.res_status == OGS_SBI_HTTP_STATUS_CREATED ||
-                        sbi_message.res_status == OGS_SBI_HTTP_STATUS_OK) {
-                        ogs_nnrf_nfm_handle_nf_status_subscribe(
-                                subscription_data, &sbi_message);
-                    } else {
-                        ogs_error("HTTP response error : %d",
-                                sbi_message.res_status);
-                    }
-                    break;
-
-                CASE(OGS_SBI_HTTP_METHOD_PATCH)
-                    if (sbi_message.res_status == OGS_SBI_HTTP_STATUS_OK ||
-                        sbi_message.res_status ==
-                            OGS_SBI_HTTP_STATUS_NO_CONTENT) {
-                        ogs_nnrf_nfm_handle_nf_status_update(
-                                subscription_data, &sbi_message);
-                    } else {
-                        ogs_error("[%s] HTTP response error [%d]",
-                                subscription_data->id ?
-                                    subscription_data->id : "Unknown",
-                                sbi_message.res_status);
-                    }
-                    break;
-
-                CASE(OGS_SBI_HTTP_METHOD_DELETE)
-                    if (sbi_message.res_status ==
-                            OGS_SBI_HTTP_STATUS_NO_CONTENT)
-                        ogs_info("[%s] Subscription deleted",
-                                subscription_data->id ?
-                                    subscription_data->id : "Unknown");
-                    else
-                        ogs_error("[%s] HTTP response error [%d]",
-                                subscription_data->id ?
-                                    subscription_data->id : "Unknown",
-                                sbi_message.res_status);
-
-                    ogs_sbi_subscription_data_remove(subscription_data);
-                    break;
-
-                DEFAULT
-                    ogs_error("Invalid HTTP method [%s]", sbi_message.h.method);
-                    ogs_assert_if_reached();
-                END
+                ogs_nnrf_nfm_handle_nf_status_subscription_response(
+                        &sbi_message, e->h.sbi.data);
                 break;
             
             DEFAULT
@@ -683,6 +637,12 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                 } else {
                     ogs_error("[%s:%d] HTTP response error [%d]",
                             amf_ue->supi, sess->psi, sbi_message.res_status);
+                    if (state ==
+                            AMF_RELEASE_SM_CONTEXT_AUTHENTICATED_REGISTRATION) {
+                        amf_sbi_fail_registration_session_release(
+                                amf_ue, ran_ue, sbi_message.res_status);
+                        break;
+                    }
                 }
                 amf_nsmf_pdusession_handle_release_sm_context(
                         amf_ue, ran_ue, sess, state);
@@ -785,9 +745,15 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         case OGS_TIMER_NF_INSTANCE_HEARTBEAT_INTERVAL:
         case OGS_TIMER_NF_INSTANCE_NO_HEARTBEAT:
         case OGS_TIMER_NF_INSTANCE_VALIDITY:
-            nf_instance = e->h.sbi.data;
-            ogs_assert(nf_instance);
+            nf_instance = ogs_sbi_nf_instance_find_by_pool_id(
+                    OGS_POINTER_TO_UINT(e->h.sbi.data));
+            if (!nf_instance) {
+                ogs_error("NF Instance has already been removed [%d]",
+                        (int)OGS_POINTER_TO_UINT(e->h.sbi.data));
+                break;
+            }
             ogs_assert(OGS_FSM_STATE(&nf_instance->sm));
+            e->h.sbi.data = nf_instance;
 
             ogs_sbi_self()->nf_instance->load = amf_instance_get_load();
 
@@ -799,8 +765,13 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             break;
 
         case OGS_TIMER_SUBSCRIPTION_VALIDITY:
-            subscription_data = e->h.sbi.data;
-            ogs_assert(subscription_data);
+            subscription_data = ogs_sbi_subscription_data_find_by_pool_id(
+                    OGS_POINTER_TO_UINT(e->h.sbi.data));
+            if (!subscription_data) {
+                ogs_error("Subscription has already been removed [%d]",
+                        (int)OGS_POINTER_TO_UINT(e->h.sbi.data));
+                break;
+            }
 
             ogs_error("[%s] Subscription validity expired",
                     subscription_data->id ?
@@ -815,8 +786,13 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             break;
 
         case OGS_TIMER_SUBSCRIPTION_PATCH:
-            subscription_data = e->h.sbi.data;
-            ogs_assert(subscription_data);
+            subscription_data = ogs_sbi_subscription_data_find_by_pool_id(
+                    OGS_POINTER_TO_UINT(e->h.sbi.data));
+            if (!subscription_data) {
+                ogs_error("Subscription has already been removed [%d]",
+                        (int)OGS_POINTER_TO_UINT(e->h.sbi.data));
+                break;
+            }
 
             if (ogs_nnrf_nfm_send_nf_status_update(subscription_data) != true)
                 ogs_error("[%s] NF status subscription update failed",
@@ -1033,6 +1009,13 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
 
         amf_ue = amf_ue_find_by_id(ran_ue->amf_ue_id);
 
+        if (amf_ue && amf_ue->registration_session_release_pending) {
+            ogs_error("[%s] Ignore NAS message while registration session "
+                    "release is pending", amf_ue->supi);
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
+
         /*
          * REGISTRATION REQUEST on an NG context that already belongs to
          * someone else. The 5GS counterpart of the same defect in the
@@ -1185,6 +1168,17 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
 
                 ogs_assert(CM_IDLE(amf_ue));
             } else {
+                if (amf_ue->registration_session_release_pending) {
+                    ogs_error("[%s] Ignore new NG context while registration "
+                            "session release is pending", amf_ue->supi);
+                    r = ngap_send_ran_ue_context_release_command(ran_ue,
+                            NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release,
+                            NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                    ogs_pkbuf_free(pkbuf);
+                    break;
+                }
                 /* Here, if the AMF_UE Context is found,
                  * the integrity check is not performed
                  * For example, REGISTRATION_REQUEST, SERVICE_REQUEST message
