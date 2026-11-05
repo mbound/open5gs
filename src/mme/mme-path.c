@@ -25,6 +25,23 @@
 #include "mme-fd-path.h"
 #include "mme-sm.h"
 
+void mme_send_delete_session_or_update_location_request(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue)
+{
+    /* TS 23.401 5.3.2.1: authentication/NAS security (5a), optional
+     * EIR check (5b), old bearer deletion (7), then Update Location (8). */
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST &&
+        mme_sess_count(mme_ue)) {
+        mme_ue->attach_session_delete_pending = true;
+        mme_gtp_send_delete_all_sessions(enb_ue, mme_ue,
+                OGS_GTP_DELETE_SEND_UPDATE_LOCATION_REQUEST);
+        if (mme_sess_count(mme_ue))
+            return;
+        mme_ue->attach_session_delete_pending = false;
+    }
+    mme_s6a_send_ulr(enb_ue, mme_ue, 0);
+}
+
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 {
     int r, xact_count;
@@ -454,12 +471,16 @@ void mme_send_tau_accept_and_check_release(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
      * This ensures that the UE has acknowledged the new P-TMSI,
      * allowing the TAU procedure to complete successfully
      * and maintaining synchronization between the UE and the network.
+     *
+     * A pending GUTI also keeps the S1 connection, so that the UE can
+     * acknowledge it with TAU Complete.
      */
     ogs_info("[%s] TAU done (sgsap_connected=%d, next_ptmsi=%u)",
          mme_ue->imsi_bcd,
          MME_SGSAP_IS_CONNECTED(mme_ue),
          (unsigned)mme_ue->next.p_tmsi);
     if (!mme_ue->nas_eps.update.active_flag &&
+        !MME_NEXT_GUTI_IS_AVAILABLE(mme_ue) &&
         !MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue)) {
         enb_ue->relcause.group = S1AP_Cause_PR_nas;
         enb_ue->relcause.cause = S1AP_CauseNas_normal_release;

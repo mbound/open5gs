@@ -95,6 +95,9 @@ typedef struct ogs_gtp_xact_s {
     void (*cb)(ogs_gtp_xact_t *, void *); /**< Local timer expiration handler */
     void            *data;          /**< Transaction Data */
 
+    /* Cleanup external references before teardown; must not delete the xact. */
+    void (*delete_cb)(ogs_gtp_xact_t *);
+
     int             step;           /**< Current step in the sequence.
                                          1 : Initial
                                          2 : Triggered
@@ -126,7 +129,7 @@ typedef struct ogs_gtp_xact_s {
     uint64_t        update_flags;
 
 #define OGS_GTP_DELETE_NO_ACTION                                1
-#define OGS_GTP_DELETE_SEND_AUTHENTICATION_REQUEST              2
+#define OGS_GTP_DELETE_SEND_UPDATE_LOCATION_REQUEST             2
 #define OGS_GTP_DELETE_SEND_DETACH_ACCEPT                       3
 #define OGS_GTP_DELETE_SEND_DEACTIVATE_BEARER_CONTEXT_REQUEST   4
 #define OGS_GTP_DELETE_SEND_RELEASE_WITH_UE_CONTEXT_REMOVE      5

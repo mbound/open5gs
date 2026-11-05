@@ -36,22 +36,22 @@
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __gmm_log_domain
 
-#define AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s) do {                  \
-    if ((amf_ue)->can_restore_context) {                                \
-        /* Restore context if allowed */                                \
-        amf_ue_restore_memento((amf_ue), &((amf_ue)->memento));         \
-        (amf_ue)->security_context_available = 1;                       \
-        (amf_ue)->mac_failed = 0;                                       \
-        if (!OGS_FSM_CHECK(&amf_ue->sm, gmm_state_registered))          \
-            OGS_FSM_TRAN((s), &gmm_state_registered);                   \
+#define AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s) do {                   \
+    CLEAR_AMF_UE_TIMER((amf_ue)->t3560);                                 \
+    (amf_ue)->registration_session_release_after_authentication = false; \
+    if ((amf_ue)->can_restore_context) {                                 \
+        amf_ue_restore_memento((amf_ue), &((amf_ue)->memento));            \
+        (amf_ue)->security_context_available = 1;                        \
+        (amf_ue)->mac_failed = 0;                                        \
+        if (!OGS_FSM_CHECK((s), gmm_state_registered))                   \
+            OGS_FSM_TRAN((s), &gmm_state_registered);                    \
         ogs_warn("[%s] Failure in transaction; restoring context and "  \
-                 "transitioning to REGISTERED.", (amf_ue)->supi);       \
-    } else {                                                            \
-        /* Transition to exception state if not allowed */              \
-        OGS_FSM_TRAN((s), &gmm_state_exception);                        \
+                  "transitioning to REGISTERED.", (amf_ue)->supi);      \
+    } else {                                                           \
+        OGS_FSM_TRAN((s), &gmm_state_exception);                         \
         ogs_warn("[%s] Failure in transaction; no context "             \
-                 "restoration.", (amf_ue)->supi);                       \
-    }                                                                   \
+                  "restoration.", (amf_ue)->supi);                      \
+    }                                                                  \
 } while (0)
 
 typedef enum {
@@ -148,6 +148,15 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
         OGS_ASN_CLEAR_DATA(&amf_ue->ueRadioCapability);
         break;
     case OGS_FSM_EXIT_SIG:
+        /*
+         * The UE context survives a de-registration and is found again by
+         * 5G-S-TMSI on the next attach, so the handover counters have to be
+         * cleared by hand here. Leaving them would report handovers from a
+         * previous registration against the current one.
+         */
+        amf_ue->ho_attempted = 0;
+        amf_ue->ho_completed = 0;
+        amf_ue->ho_rejected = 0;
         break;
 
     case AMF_EVENT_5GMM_MESSAGE:
@@ -1734,6 +1743,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
     amf_sess_t *sess = NULL;
     ogs_nas_5gs_message_t *nas_message = NULL;
     ogs_nas_security_header_type_t h;
+    ogs_nas_de_registration_type_t *de_registration_type = NULL;
 
     amf_nsmf_pdusession_sm_context_param_t param;
 
@@ -1780,6 +1790,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
 
         switch (nas_message->gmm.h.message_type) {
         case OGS_NAS_5GS_REGISTRATION_REQUEST:
+            amf_ue->registration_session_release_after_authentication = false;
             ogs_info("Registration request");
             gmm_cause = gmm_handle_registration_request(
                     amf_ue, h, e->ngap.code,
@@ -1854,6 +1865,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
             }
 
             if (h.integrity_protected && SECURITY_CONTEXT_IS_VALID(amf_ue)) {
+                amf_ue->can_restore_context = false;
 
                 /*
                  * If the OLD RAN_UE is being maintained in AMF-UE Context,
@@ -1928,36 +1940,13 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                     OGS_FSM_TRAN(s, &gmm_state_registered);
 
             } else {
-                memset(&param, 0, sizeof(param));
-                param.ue_location = true;
-                param.ue_timezone = true;
-
-                /*
-                 * SUCI handling may have adopted the old UE's sessions and
-                 * their pending SBI transactions after xact_count was saved.
-                 * The count can therefore grow even when release-all sends
-                 * no new request because no SM context remains. Comparing
-                 * against that stale count would skip the AUSF request but
-                 * still enter gmm_state_authentication, stalling registration.
-                 *
-                 * Refresh the baseline immediately before release-all to
-                 * detect newly sent requests. AMF_SESSION_RELEASE_PENDING()
-                 * still covers releases that were already in progress.
-                 */
-                xact_count = amf_sess_xact_count(amf_ue);
-                amf_sbi_send_release_all_sessions(
-                        ran_ue, amf_ue,
-                        AMF_RELEASE_SM_CONTEXT_NO_STATE, &param);
-
-                if (!AMF_SESSION_RELEASE_PENDING(amf_ue) &&
-                    amf_sess_xact_count(amf_ue) == xact_count) {
-                    r = amf_ue_sbi_discover_and_send(
-                            OpenAPI_service_name_nausf_auth, NULL,
-                            amf_nausf_auth_build_authenticate,
-                            amf_ue, 0, NULL);
-                    ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
-                }
+                amf_ue->registration_session_release_after_authentication = true;
+                r = amf_ue_sbi_discover_and_send(
+                        OpenAPI_service_name_nausf_auth, NULL,
+                        amf_nausf_auth_build_authenticate,
+                        amf_ue, 0, NULL);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
 
                 OGS_FSM_TRAN(s, &gmm_state_authentication);
             }
@@ -2118,7 +2107,11 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
         case OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE:
             ogs_info("[%s] Deregistration request", amf_ue->supi);
 
-            if (!h.integrity_protected || !SECURITY_CONTEXT_IS_VALID(amf_ue)) {
+            de_registration_type = &nas_message->gmm.
+                deregistration_request_from_ue.de_registration_type;
+            if (!h.integrity_protected || !SECURITY_CONTEXT_IS_VALID(amf_ue) ||
+                !gmm_check_ngksi(amf_ue, de_registration_type->tsc,
+                    de_registration_type->ksi)) {
                 ogs_error("No Security Context");
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
@@ -2224,6 +2217,7 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
 
     ogs_nas_5gs_message_t *nas_message = NULL;
     ogs_nas_security_header_type_t h;
+    ogs_nas_de_registration_type_t *de_registration_type = NULL;
 
     ogs_nas_5gs_authentication_failure_t *authentication_failure = NULL;
     ogs_nas_authentication_failure_parameter_t
@@ -2277,7 +2271,7 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                     amf_ue, &nas_message->gmm.authentication_response);
 
             if (rv != OGS_OK) {
-                ogs_error("gmm_handle_authentication_response() failed");
+                ogs_warn("gmm_handle_authentication_response() failed");
                 r = nas_5gs_send_authentication_reject(amf_ue);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
@@ -2398,7 +2392,18 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
             break;
 
         case OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE:
-            ogs_warn("[%s] Deregistration request", amf_ue->supi);
+            de_registration_type = &nas_message->gmm.
+                deregistration_request_from_ue.de_registration_type;
+            if (amf_ue->can_restore_context &&
+                    (!h.integrity_protected ||
+                     !SECURITY_CONTEXT_IS_VALID(amf_ue) ||
+                     !gmm_check_ngksi(amf_ue, de_registration_type->tsc,
+                         de_registration_type->ksi))) {
+                ogs_warn("[%s] Ignore unverified Deregistration request "
+                        "during authentication", amf_ue->supi);
+                break;
+            }
+            ogs_error("[%s] Deregistration request", amf_ue->supi);
 
             gmm_handle_deregistration_request(
                     amf_ue, &nas_message->gmm.deregistration_request_from_ue);
@@ -2725,24 +2730,42 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
 static void gmm_continue_registration(ogs_fsm_t *s, amf_ue_t *amf_ue)
 {
     int r;
+    ran_ue_t *ran_ue = NULL;
+    amf_nsmf_pdusession_sm_context_param_t param;
 
     ogs_assert(s);
     ogs_assert(amf_ue);
 
-    r = amf_ue_sbi_discover_and_send(
-            OpenAPI_service_name_nudm_uecm, NULL,
-            amf_nudm_uecm_build_registration, amf_ue, 0, NULL);
-    ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
-
     if (amf_ue->nas.message_type == OGS_NAS_5GS_REGISTRATION_REQUEST) {
         OGS_FSM_TRAN(s, &gmm_state_initial_context_setup);
+        if (amf_ue->registration_session_release_after_authentication) {
+            amf_ue->registration_session_release_after_authentication = false;
+            ran_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+            ogs_assert(ran_ue);
+
+            memset(&param, 0, sizeof(param));
+            param.ue_location = true;
+            param.ue_timezone = true;
+            amf_ue->registration_session_release_pending = true;
+            amf_sbi_send_release_all_sessions(ran_ue, amf_ue,
+                    AMF_RELEASE_SM_CONTEXT_AUTHENTICATED_REGISTRATION, &param);
+            if (!AMF_SESSION_SYNC_DONE(amf_ue,
+                        AMF_RELEASE_SM_CONTEXT_AUTHENTICATED_REGISTRATION))
+                return;
+            amf_ue->registration_session_release_pending = false;
+        }
     } else if (amf_ue->nas.message_type == OGS_NAS_5GS_SERVICE_REQUEST) {
         OGS_FSM_TRAN(s, &gmm_state_registered);
     } else {
         ogs_fatal("Invalid OGS_NAS_5GS[%d]", amf_ue->nas.message_type);
         ogs_assert_if_reached();
     }
+
+    r = amf_ue_sbi_discover_and_send(
+            OpenAPI_service_name_nudm_uecm, NULL,
+            amf_nudm_uecm_build_registration, amf_ue, 0, NULL);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
 }
 
 static void gmm_complete_equipment_identity_check(
@@ -2828,6 +2851,7 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
     ran_ue_t *ran_ue = NULL;
     ogs_nas_5gs_message_t *nas_message = NULL;
     ogs_nas_security_header_type_t h;
+    ogs_nas_de_registration_type_t *de_registration_type = NULL;
     ogs_sbi_message_t *sbi_message = NULL;
     ogs_sbi_xact_t *xact = NULL, *next_xact = NULL;
     int service_name_id = OpenAPI_service_name_NULL;
@@ -2884,14 +2908,16 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
 
         h.type = e->nas.type;
 
+        if (amf_ue->eir_check_pending &&
+                nas_message->gmm.h.message_type !=
+                    OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE) {
+            ogs_warn("[%s] Ignore NAS message while 5G-EIR check is pending",
+                    amf_ue->supi);
+            break;
+        }
+
         switch (nas_message->gmm.h.message_type) {
         case OGS_NAS_5GS_SECURITY_MODE_COMPLETE:
-            if (amf_ue->eir_check_pending) {
-                ogs_error("[%s] Ignore repeated Security mode complete",
-                        amf_ue->supi);
-                break;
-            }
-
             ogs_info("[%s] Security mode complete", amf_ue->supi);
 
         /*
@@ -2921,13 +2947,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                 break;
             }
 
-            /*
-             * If the OLD RAN_UE is being maintained in AMF-UE Context,
-             * it deletes the NG Context after exchanging
-             * the UEContextReleaseCommand/Complete with the gNB
-             */
-            CLEAR_NG_CONTEXT(amf_ue);
-
             CLEAR_AMF_UE_TIMER(amf_ue->t3560);
 
             gmm_cause = gmm_handle_security_mode_complete(
@@ -2939,9 +2958,17 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                 r = nas_5gs_send_gmm_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
-                OGS_FSM_TRAN(s, gmm_state_exception);
+                AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
+
+            amf_ue->can_restore_context = false;
+            /*
+             * If the OLD RAN_UE is being maintained in AMF-UE Context,
+             * it deletes the NG Context after exchanging
+             * the UEContextReleaseCommand/Complete with the gNB
+             */
+            CLEAR_NG_CONTEXT(amf_ue);
 
             if (amf_ue->amf_ue_context_transfer_state ==
                     UE_CONTEXT_TRANSFER_NEW_AMF_STATE) {
@@ -2978,11 +3005,10 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
             ogs_warn("[%s] Security mode reject : Cause[%d]",
                     amf_ue->supi,
                     nas_message->gmm.security_mode_reject.gmm_cause);
-            CLEAR_AMF_UE_TIMER(amf_ue->t3560);
-            OGS_FSM_TRAN(s, &gmm_state_exception);
+            AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
             break;
         case OGS_NAS_5GS_REGISTRATION_REQUEST:
-            ogs_warn("Registration request");
+            ogs_error("Registration request");
             gmm_cause = gmm_handle_registration_request(
                     amf_ue, h, e->ngap.code,
                     &nas_message->gmm.registration_request);
@@ -2992,7 +3018,7 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                 r = nas_5gs_send_registration_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
-                OGS_FSM_TRAN(s, gmm_state_exception);
+                AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
 
@@ -3012,7 +3038,7 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                     );
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
-            OGS_FSM_TRAN(s, &gmm_state_exception);
+            AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
             break;
 
         case OGS_NAS_5GS_5GMM_STATUS:
@@ -3021,7 +3047,18 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
             break;
 
         case OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE:
-            ogs_warn("[%s] Deregistration request", amf_ue->supi);
+            de_registration_type = &nas_message->gmm.
+                deregistration_request_from_ue.de_registration_type;
+            if ((amf_ue->can_restore_context || amf_ue->eir_check_pending) &&
+                    (!h.integrity_protected ||
+                     !SECURITY_CONTEXT_IS_VALID(amf_ue) ||
+                     !gmm_check_ngksi(amf_ue, de_registration_type->tsc,
+                         de_registration_type->ksi))) {
+                ogs_warn("[%s] Ignore unverified Deregistration request "
+                        "during security mode", amf_ue->supi);
+                break;
+            }
+            ogs_error("[%s] Deregistration request", amf_ue->supi);
 
             gmm_handle_deregistration_request(
                     amf_ue, &nas_message->gmm.deregistration_request_from_ue);
@@ -3201,7 +3238,7 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
 
 void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
 {
-    int rv, r, state, xact_count = 0;
+    int rv, r, state, xact_count;
     ogs_nas_5gmm_cause_t gmm_cause;
 
     amf_ue_t *amf_ue = NULL;
@@ -3213,7 +3250,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
     ogs_sbi_message_t *sbi_message = NULL;
 
     gmm_configuration_update_command_param_t gmm_param;
-    amf_nsmf_pdusession_sm_context_param_t nsmf_param;
 
     int service_name_id = OpenAPI_service_name_NULL;
 
@@ -3235,12 +3271,20 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
     case OGS_FSM_ENTRY_SIG:
         break;
     case OGS_FSM_EXIT_SIG:
+        if (amf_ue->registration_session_release_pending)
+            amf_sbi_cancel_registration_session_release(amf_ue);
         break;
 
     case OGS_EVENT_SBI_CLIENT:
         sbi_message = e->h.sbi.message;
         ogs_assert(sbi_message);
         state = e->h.sbi.state;
+
+        if (amf_ue->registration_session_release_pending) {
+            ogs_error("[%s] Ignore SBI result while registration session "
+                    "release is pending", amf_ue->supi);
+            break;
+        }
 
         service_name_id = ogs_sbi_service_name_id_from_string(
                 sbi_message->h.service.name);
@@ -3556,7 +3600,11 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
 
         h.type = e->nas.type;
 
-        xact_count = amf_sess_xact_count(amf_ue);
+        if (amf_ue->registration_session_release_pending) {
+            ogs_error("[%s] Ignore NAS message while registration session "
+                    "release is pending", amf_ue->supi);
+            break;
+        }
 
         switch (nas_message->gmm.h.message_type) {
         case OGS_NAS_5GS_REGISTRATION_COMPLETE:
@@ -3658,23 +3706,13 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                 break;
             }
 
-            memset(&nsmf_param, 0, sizeof(nsmf_param));
-            nsmf_param.ue_location = true;
-            nsmf_param.ue_timezone = true;
-
-            amf_sbi_send_release_all_sessions(
-                    ran_ue, amf_ue,
-                    AMF_RELEASE_SM_CONTEXT_NO_STATE, &nsmf_param);
-
-            if (!AMF_SESSION_RELEASE_PENDING(amf_ue) &&
-                amf_sess_xact_count(amf_ue) == xact_count) {
-                r = amf_ue_sbi_discover_and_send(
-                        OpenAPI_service_name_nausf_auth, NULL,
-                        amf_nausf_auth_build_authenticate,
-                        amf_ue, 0, NULL);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
-            }
+            amf_ue->registration_session_release_after_authentication = true;
+            r = amf_ue_sbi_discover_and_send(
+                    OpenAPI_service_name_nausf_auth, NULL,
+                    amf_nausf_auth_build_authenticate,
+                    amf_ue, 0, NULL);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
             OGS_FSM_TRAN(s, &gmm_state_authentication);
             break;
 
@@ -3712,7 +3750,36 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                     amf_timer_cfg(AMF_TIMER_T3550)->max_count) {
                 ogs_warn("[%s] Retransmission failed. Stop retransmission",
                         amf_ue->suci);
-                OGS_FSM_TRAN(&amf_ue->sm, &gmm_state_exception);
+                /*
+                 * TS 24.501, 5.5.1.2.8(c) and 5.5.1.3.8(c):
+                 * abort registration without removing the UE context.
+                 */
+                CLEAR_AMF_UE_TIMER(amf_ue->t3550);
+                OGS_FSM_TRAN(s, &gmm_state_registered);
+
+                ran_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+                if (!ran_ue) {
+                    ogs_timer_start(amf_ue->mobile_reachable.timer,
+                            ogs_time_from_sec(
+                                amf_self()->time.t3512.value + 240));
+                    break;
+                }
+
+                xact_count = amf_sess_xact_count(amf_ue);
+                ran_ue->deactivation.group = NGAP_Cause_PR_nas;
+                ran_ue->deactivation.cause = NGAP_CauseNas_normal_release;
+
+                amf_sbi_send_deactivate_all_sessions(
+                        ran_ue, amf_ue, AMF_UPDATE_SM_CONTEXT_DEACTIVATED,
+                        NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release);
+
+                if (amf_sess_xact_count(amf_ue) == xact_count) {
+                    r = ngap_send_ran_ue_context_release_command(ran_ue,
+                            NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release,
+                            NGAP_UE_CTX_REL_NG_REMOVE_AND_UNLINK, 0);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                }
             } else {
                 amf_ue->t3550.retry_count++;
                 r = nas_5gs_send_registration_accept(amf_ue);

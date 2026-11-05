@@ -3437,14 +3437,11 @@ int mme_enb_set_enb_id(mme_enb_t *enb, uint32_t enb_id)
 
     /*
      * A reconnect can register the same eNB-ID before the old association's
-     * shutdown event is handled. Keep the existing last-registration-wins
-     * mapping, but also replace the key pointer: plain ogs_hash_set() would
-     * retain &old_enb->enb_id even though its value now points to this
-     * context. Freeing or reusing the old context could then break lookups
-     * (including handover target lookup), even with owner-checked removal.
+     * shutdown event is handled: the last registration wins. The hash keeps
+     * its own copy of the key, so freeing or reusing the old context does not
+     * break lookups (including handover target lookup).
      */
-    ogs_hash_set_rekey(self.enb_id_hash,
-            &enb->enb_id, sizeof(enb->enb_id), enb);
+    ogs_hash_set(self.enb_id_hash, &enb->enb_id, sizeof(enb->enb_id), enb);
 
     enb->enb_id_presence = true;
 
@@ -4017,6 +4014,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
 
     /* Initialization */
     mme_ue->nas_eps.mme.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
+    mme_ue->nas_eps.ue.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
 
     mme_ue_fsm_init(mme_ue);
 
@@ -4398,6 +4396,7 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,
     uint16_t target_bitmap_before = 0;
     bool target_had_imsi = false;
     char target_imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    int i;
     ogs_assert(mme_ue && imsi_bcd);
 
     /*
@@ -4552,6 +4551,33 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,
 
             /* Phase-2 : Move Session Context from OLD to NEW MME-UE Context */
             ogs_assert(ogs_list_empty(&mme_ue->sess_list));
+
+            /*
+             * Preserve subscription data when migrating retained PDNs, even
+             * when the target already has a subscription but no PDNs.
+             *
+             * Keeping PDNs through GUTI re-attach authentication (#4577) also
+             * requires their APN data to survive old-UE removal. Commit
+             * d86e013f fixed this by transferring the subscription list and
+             * rebinding sess->session, which pointed into the old UE's array.
+             *
+             * mme_sess_set_session() now gives each PDN its own configuration
+             * and APN name. These allocations stay with the same PDN objects
+             * during migration, so pointer rebinding is no longer needed.
+             *
+             * The subscription list and default APN identifier must still
+             * move to the new UE. Free the target's previous subscription
+             * first, then clear the old count after the shallow copy so
+             * old-UE removal cannot free the transferred APN names.
+             */
+            ogs_assert(old_mme_ue->num_of_session <= OGS_MAX_NUM_OF_SESS);
+            mme_session_remove_all(mme_ue);
+            mme_ue->num_of_session = old_mme_ue->num_of_session;
+            mme_ue->context_identifier = old_mme_ue->context_identifier;
+            for (i = 0; i < mme_ue->num_of_session; i++) {
+                mme_ue->session[i] = old_mme_ue->session[i];
+            }
+            old_mme_ue->num_of_session = 0;
 
             memcpy(&mme_ue->sess_list,
                     &old_mme_ue->sess_list, sizeof(mme_ue->sess_list));
@@ -4912,6 +4938,8 @@ void mme_sess_remove(mme_sess_t *sess)
 
     mme_dns_sess_clear(sess);
 
+    mme_sess_set_session(sess, NULL);
+
     ogs_pool_id_free(&mme_sess_pool, sess);
 
     stats_remove_mme_session();
@@ -4929,6 +4957,41 @@ void mme_sess_remove_all(mme_ue_t *mme_ue)
 
         sess = next_sess;
     }
+}
+
+void mme_sess_set_session(mme_sess_t *sess, const ogs_session_t *session)
+{
+    ogs_session_t *new_session = NULL;
+
+    ogs_assert(sess);
+
+    if (session) {
+        ogs_assert(session->name);
+        new_session = ogs_calloc(1, sizeof(*new_session));
+        ogs_assert(new_session);
+        new_session->name = ogs_strdup(session->name);
+        ogs_assert(new_session->name);
+
+        /* Copy only the EPC fields populated by S6a/Gn. Framed routes are
+         * delivered directly to the SMF and are not owned by the MME. */
+        new_session->context_identifier = session->context_identifier;
+        new_session->session_type = session->session_type;
+        new_session->qos = session->qos;
+        new_session->ambr = session->ambr;
+        new_session->ue_ip = session->ue_ip;
+        new_session->smf_ip = session->smf_ip;
+        memcpy(new_session->charging_characteristics,
+                session->charging_characteristics,
+                sizeof(new_session->charging_characteristics));
+        new_session->charging_characteristics_presence =
+            session->charging_characteristics_presence;
+    }
+
+    if (sess->session) {
+        ogs_free(sess->session->name);
+        ogs_free(sess->session);
+    }
+    sess->session = new_session;
 }
 
 mme_sess_t *mme_sess_find_by_pti(const mme_ue_t *mme_ue, uint8_t pti)
@@ -5401,6 +5464,7 @@ void mme_session_remove_all(mme_ue_t *mme_ue)
         if (mme_ue->session[i].name)
             ogs_free(mme_ue->session[i].name);
     }
+    memset(mme_ue->session, 0, sizeof(mme_ue->session));
 
     mme_ue->num_of_session = 0;
 }
@@ -5817,6 +5881,11 @@ void mme_ue_save_memento(mme_ue_t *mme_ue, mme_ue_memento_t *memento)
     ogs_assert(mme_ue);
     ogs_assert(memento);
 
+    memento->ue_ksi = mme_ue->nas_eps.ue.ksi;
+    memento->ue_tsc = mme_ue->nas_eps.ue.tsc;
+    memento->mme_ksi = mme_ue->nas_eps.mme.ksi;
+    memento->mme_tsc = mme_ue->nas_eps.mme.tsc;
+
     memcpy(&memento->ue_network_capability,
             &mme_ue->ue_network_capability,
             sizeof(memento->ue_network_capability));
@@ -5854,6 +5923,11 @@ void mme_ue_restore_memento(mme_ue_t *mme_ue, const mme_ue_memento_t *memento)
 {
     ogs_assert(mme_ue);
     ogs_assert(memento);
+
+    mme_ue->nas_eps.ue.ksi = memento->ue_ksi;
+    mme_ue->nas_eps.ue.tsc = memento->ue_tsc;
+    mme_ue->nas_eps.mme.ksi = memento->mme_ksi;
+    mme_ue->nas_eps.mme.tsc = memento->mme_tsc;
 
     memcpy(&mme_ue->ue_network_capability,
             &memento->ue_network_capability,

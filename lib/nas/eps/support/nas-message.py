@@ -198,7 +198,7 @@ msg_list["DOWNLINK NAS TRANSPORT"] = { "type" : "98" }
 msg_list["UPLINK NAS TRANSPORT"] = { "type" : "99" }
 msg_list["CS SERVICE NOTIFICATION"] = { "type" : "100" }
 msg_list["DOWNLINK GENERIC NAS TRANSPORT"] = { "type" : "104" }
-msg_list["UPLINK GENERIC NAS TRANSPORT"] = { "type" : "101" }
+msg_list["UPLINK GENERIC NAS TRANSPORT"] = { "type" : "105" }
 
 msg_list["ACTIVATE DEFAULT EPS BEARER CONTEXT REQUEST"] = { "type" : "193" }
 msg_list["ACTIVATE DEFAULT EPS BEARER CONTEXT ACCEPT"] = { "type" : "194" }
@@ -748,6 +748,14 @@ for (k, v) in sorted_msg_list:
     if [ies for ies in msg_list[k]["ies"] if ies["presence"] != "M"]:
         f.write("""        default:
             ogs_warn("Unknown type(0x%x) or not implemented\\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }

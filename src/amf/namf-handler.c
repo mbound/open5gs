@@ -1116,6 +1116,12 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
         ogs_error("No PDU Session Identity");
         return OGS_ERROR;
     }
+    if (ogs_pdu_session_id_is_valid(
+            N1N2MessageTransferReqData->pdu_session_id) == false) {
+        ogs_error("Invalid PDU Session Identity [%d]",
+                N1N2MessageTransferReqData->pdu_session_id);
+        return OGS_ERROR;
+    }
     pdu_session_id = N1N2MessageTransferReqData->pdu_session_id;
 
     sess = amf_sess_find_by_psi(amf_ue, pdu_session_id);
@@ -1654,7 +1660,7 @@ int amf_namf_callback_handle_sm_context_status(
     amf_ue_t *amf_ue = NULL;
     amf_sess_t *sess = NULL;
 
-    uint8_t pdu_session_identity;
+    int pdu_session_identity;
 
     ogs_sbi_message_t sendmsg;
     ogs_sbi_response_t *response = NULL;
@@ -1684,10 +1690,12 @@ int amf_namf_callback_handle_sm_context_status(
         goto cleanup;
     }
 
-    pdu_session_identity = atoi(recvmsg->h.resource.component[2]);
-    if (pdu_session_identity == OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED) {
+    pdu_session_identity = ogs_pdu_session_id_from_string(
+            recvmsg->h.resource.component[2]);
+    if (ogs_pdu_session_id_is_valid(pdu_session_identity) == false) {
         status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
-        ogs_error("[%s] PDU Session Identity is unassigned", amf_ue->supi);
+        ogs_error("[%s] Invalid PDU Session Identity [%s]",
+                amf_ue->supi, recvmsg->h.resource.component[2]);
         goto cleanup;
     }
 
@@ -2256,10 +2264,6 @@ int amf_namf_comm_handle_ue_context_transfer_request(
     OpenAPI_pdu_session_context_t *PduSessionContext = NULL;
     OpenAPI_lnode_t *node = NULL;
     OpenAPI_ue_context_t UeContext;
-    OpenAPI_seaf_data_t SeafData;
-    OpenAPI_ng_ksi_t Ng_ksi;
-    OpenAPI_key_amf_t Key_amf;
-    OpenAPI_sc_type_e Tsc_type;
 
     OpenAPI_ue_context_transfer_req_data_t *UeContextTransferReqData = NULL;
     OpenAPI_ue_context_transfer_rsp_data_t UeContextTransferRspData;
@@ -2268,7 +2272,6 @@ int amf_namf_comm_handle_ue_context_transfer_request(
 
     char *encoded_gmm_capability = NULL;
     int status = OGS_SBI_HTTP_STATUS_OK;
-    char hxkamf_string[OGS_KEYSTRLEN(OGS_SHA256_DIGEST_SIZE)];
     char *strerror = NULL;
 
     ogs_assert(stream);
@@ -2335,26 +2338,12 @@ int amf_namf_comm_handle_ue_context_transfer_request(
         UeContext.sub_ue_ambr = UeAmbr;
     }
 
-    if ((amf_ue->nas.ue.ksi != 0) && (amf_ue->nas.ue.tsc != 0)) {
-        memset(&SeafData, 0, sizeof(SeafData));
-        Tsc_type = (amf_ue->nas.ue.tsc == 0) ?
-            OpenAPI_sc_type_NATIVE : OpenAPI_sc_type_MAPPED;
-
-        memset(&Ng_ksi, 0, sizeof(Ng_ksi));
-        SeafData.ng_ksi = &Ng_ksi;
-        Ng_ksi.tsc = Tsc_type;
-        Ng_ksi.ksi = (int)amf_ue->nas.ue.ksi;
-
-        memset(&Key_amf, 0, sizeof(Key_amf));
-        SeafData.key_amf = &Key_amf;
-        OpenAPI_key_amf_type_e temp_key_type =
-                (OpenAPI_key_amf_type_e)OpenAPI_key_amf_type_KAMF;
-        Key_amf.key_type = temp_key_type;
-        ogs_hex_to_ascii(amf_ue->kamf, sizeof(amf_ue->kamf),
-                hxkamf_string, sizeof(hxkamf_string));
-        Key_amf.key_val = hxkamf_string;
-        UeContext.seaf_data = &SeafData;
-    }
+    /*
+     * TODO: Validate the transfer request and forwarded Registration Request
+     * before exporting SEAF key material. Local context validity alone does
+     * not authorize its disclosure. Omit seafData until that is implemented;
+     * the receiving Open5GS AMF performs fresh authentication after transfer.
+     */
 
     encoded_gmm_capability =
         amf_namf_comm_base64_encode_5gmm_capability(amf_ue);
@@ -2529,11 +2518,15 @@ static int amf_namf_comm_decode_ue_context(
         }
 
         if (UeContext->seaf_data->ng_ksi->tsc != OpenAPI_sc_type_NULL) {
-            amf_ue->nas.ue.tsc =
+            amf_ue->nas.amf.tsc =
                 (UeContext->seaf_data->ng_ksi->tsc ==
                  OpenAPI_sc_type_NATIVE) ? 0 : 1;
-            amf_ue->nas.ue.ksi =
-                (uint8_t)UeContext->seaf_data->ng_ksi->ksi;
+            /*
+             * SEAF carries the AMF's current ngKSI. Do not overwrite
+             * the UE-reported ngKSI; it is restored independently by
+             * the transferred MM context when present.
+             */
+            amf_ue->nas.amf.ksi = (uint8_t)UeContext->seaf_data->ng_ksi->ksi;
 
             if (ogs_ascii_to_hex_checked(
                     UeContext->seaf_data->key_amf->key_val,
@@ -2858,7 +2851,17 @@ static void amf_namf_comm_decode_ue_session_context_list(
         uint16_t fqdn_port = 0;
         ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
 
-        if (!PduSessionContext || !PduSessionContext->sm_context_ref) {
+        if (!PduSessionContext) {
+            ogs_error("No PDU Session Context");
+            continue;
+        }
+        if (ogs_pdu_session_id_is_valid(
+                PduSessionContext->pdu_session_id) == false) {
+            ogs_error("Invalid PDU Session Identity [PSI:%d]",
+                    PduSessionContext->pdu_session_id);
+            continue;
+        }
+        if (!PduSessionContext->sm_context_ref) {
             ogs_error("No smContextRef [PSI:%d]",
                     PduSessionContext ? PduSessionContext->pdu_session_id : 0);
             continue;
