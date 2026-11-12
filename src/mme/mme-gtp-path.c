@@ -39,6 +39,7 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
     ogs_sockaddr_t from;
     mme_sgw_t *sgw = NULL;
     mme_sgsn_t *sgsn = NULL;
+    mme_s10_peer_t *s10 = NULL;
     uint8_t gtp_ver;
 
     ogs_assert(fd != INVALID_SOCKET);
@@ -57,6 +58,14 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 
     ogs_pkbuf_trim(pkbuf, size);
 
+    /* The GTP version is in the first octet, but no GTP-C datagram
+     * shorter than the 8-byte basic header is valid. */
+    if (pkbuf->len < OGS_GTPV2C_HEADER_LEN - OGS_GTP2_TEID_LEN) {
+        ogs_warn("Ignoring truncated GTP-C datagram");
+        ogs_pkbuf_free(pkbuf);
+        return;
+    }
+
     gtp_ver = ((ogs_gtp2_header_t *)pkbuf->data)->version;
     switch (gtp_ver) {
     case 1:
@@ -73,15 +82,21 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
         break;
     case 2:
         sgw = mme_sgw_find_by_addr(&from);
-        if (!sgw) {
-            ogs_error("Unknown SGW : %s", OGS_ADDR(&from, buf));
-            ogs_pkbuf_free(pkbuf);
-            return;
+        if (sgw) {
+            e = mme_event_new(MME_EVENT_S11_MESSAGE);
+            ogs_assert(e);
+            e->gnode = &sgw->gnode;
+        } else {
+            s10 = mme_s10_peer_find_by_addr(&from);
+            if (!s10) {
+                ogs_error("Unknown GTPv2-C peer : %s", OGS_ADDR(&from, buf));
+                ogs_pkbuf_free(pkbuf);
+                return;
+            }
+            e = mme_event_new(MME_EVENT_S10_MESSAGE);
+            ogs_assert(e);
+            e->gnode = &s10->gnode;
         }
-        ogs_assert(sgw);
-        e = mme_event_new(MME_EVENT_S11_MESSAGE);
-        ogs_assert(e);
-        e->gnode = &sgw->gnode;
         break;
     default:
         ogs_warn("Rx unexpected GTP version %u", gtp_ver);
@@ -220,6 +235,7 @@ int mme_gtp_open(void)
     ogs_sock_t *sock = NULL;
     mme_sgw_t *sgw = NULL;
     mme_sgsn_t *sgsn = NULL;
+    mme_s10_peer_t *s10 = NULL;
 
     ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
         sock = ogs_gtp_server(node);
@@ -260,6 +276,21 @@ int mme_gtp_open(void)
                 ogs_gtp_self()->gtpc_sock, ogs_gtp_self()->gtpc_sock6,
                 &sgsn->gnode);
         ogs_assert(rv == OGS_OK);
+    }
+
+    ogs_list_for_each(&mme_self()->s10_peer_list, s10) {
+        rv = ogs_gtp_connect(
+                ogs_gtp_self()->gtpc_sock, ogs_gtp_self()->gtpc_sock6,
+                &s10->gnode);
+        if (rv != OGS_OK) return OGS_ERROR;
+
+        /* Same remote GTPv2-C address cannot be both an S10 MME
+         * and an S11 SGW, because the receive path selects by peer. */
+        if (mme_sgw_find_by_addr(&s10->gnode.addr)) {
+            ogs_error("S10 MME conflicts with an S11 SGW endpoint");
+            return OGS_ERROR;
+        }
+        ogs_warn("S10 peer configured: relocation is not yet enabled");
     }
 
     return OGS_OK;

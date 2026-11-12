@@ -42,6 +42,24 @@ KASME/NAS security state serialization and validation are not implemented.
 Neither S10 peer connectivity nor UE context migration or RAN handover is
 implemented. Codec round-trips alone do not establish interoperability.
 
+### S10 MME transport groundwork (12 November 2026)
+
+- The MME now accepts an optional `mme.gtpc.client.mme` peer list
+  with `address`, `port` (default GTP-C port 2123), and `family`.
+  A commented configuration example is in `configs/open5gs/mme.yaml.in`.
+- Dedicated `mme_s10_peer_t` objects and receive events separate
+  explicit S10 peer endpoints from S11 SGW endpoints.
+- Source-address matching limits the S10 receive path to configured
+  peers; overlapping S11/S10 peer IP/port addresses are rejected.
+- **Receive-only stub:** S10 messages are parsed and discarded, with
+  diagnostic logging. No S10 transactions, context migration, TEID
+  allocation, forward-relocation responses or live handover are enabled.
+- GTP-C receive now rejects datagrams shorter than the basic header.
+
+This is transport/routing groundwork only. The operational S10 peer
+state machine, TAI/PLMN selection, authenticated inter-node transport,
+transactions, and UE/bearer handover remain mandatory work.
+
 ### M1-A: Codec and transport foundation
 
 - Add TS 29.274 mobility message types 128–140, including Context Request/Response/Acknowledge, Forward Relocation Request/Response/Complete, Forward Access Context Notification/Acknowledge, and Relocation Cancel.

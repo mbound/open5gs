@@ -39,6 +39,7 @@ int __esm_log_domain;
 static OGS_POOL(mme_sgsn_route_pool, mme_sgsn_route_t);
 static OGS_POOL(mme_sgsn_pool, mme_sgsn_t);
 static OGS_POOL(mme_sgw_pool, mme_sgw_t);
+static OGS_POOL(mme_s10_peer_pool, mme_s10_peer_t);
 static OGS_POOL(mme_pgw_pool, mme_pgw_t);
 static OGS_POOL(mme_vlr_pool, mme_vlr_t);
 static OGS_POOL(mme_csmap_pool, mme_csmap_t);
@@ -94,6 +95,7 @@ void mme_context_init(void)
 
     ogs_list_init(&self.sgsn_list);
     ogs_list_init(&self.sgw_list);
+    ogs_list_init(&self.s10_peer_list);
     ogs_list_init(&self.pgw_list);
     ogs_list_init(&self.enb_list);
     ogs_list_init(&self.vlr_list);
@@ -104,6 +106,7 @@ void mme_context_init(void)
     ogs_pool_init(&mme_sgsn_route_pool, ogs_app()->pool.nf);
     ogs_pool_init(&mme_sgsn_pool, ogs_app()->pool.nf);
     ogs_pool_init(&mme_sgw_pool, ogs_app()->pool.nf);
+    ogs_pool_init(&mme_s10_peer_pool, ogs_app()->pool.nf);
     ogs_pool_init(&mme_pgw_pool, ogs_app()->pool.nf);
     ogs_pool_init(&mme_vlr_pool, ogs_app()->pool.nf);
     ogs_pool_init(&mme_csmap_pool, ogs_app()->pool.csmap);
@@ -156,6 +159,7 @@ void mme_context_final(void)
     mme_ue_remove_all();
 
     mme_sgw_remove_all();
+    mme_s10_peer_remove_all();
     mme_pgw_remove_all();
     mme_csmap_remove_all();
     mme_vlr_remove_all();
@@ -192,6 +196,7 @@ void mme_context_final(void)
     ogs_pool_final(&mme_sgsn_pool);
     ogs_pool_final(&mme_sgsn_route_pool);
     ogs_pool_final(&mme_sgw_pool);
+    ogs_pool_final(&mme_s10_peer_pool);
     ogs_pool_final(&mme_pgw_pool);
     ogs_pool_final(&mme_csmap_pool);
     ogs_pool_final(&mme_vlr_pool);
@@ -780,7 +785,108 @@ int mme_context_parse_config(void)
                                 const char *client_key =
                                     ogs_yaml_iter_key(&client_iter);
                                 ogs_assert(client_key);
-                                if (!strcmp(client_key, "sgwc")) {
+                                if (!strcmp(client_key, "mme")) {
+                                    /* S10 peer endpoint list; no handover
+                                     * initiated until routing is implemented. */
+                                    ogs_yaml_iter_t peer_array, peer_iter;
+                                    ogs_yaml_iter_recurse(&client_iter,
+                                            &peer_array);
+                                    do {
+                                        ogs_sockaddr_t *addr = NULL;
+                                        int family = AF_UNSPEC;
+                                        int i, num = 0;
+                                        const char *hostname[
+                                                OGS_MAX_NUM_OF_HOSTNAME];
+                                        uint16_t port =
+                                                ogs_gtp_self()->gtpc_port;
+
+                                        if (ogs_yaml_iter_type(&peer_array) ==
+                                                YAML_MAPPING_NODE) {
+                                            memcpy(&peer_iter, &peer_array,
+                                                    sizeof(peer_iter));
+                                        } else if (ogs_yaml_iter_type(
+                                                    &peer_array) ==
+                                                YAML_SEQUENCE_NODE) {
+                                            if (!ogs_yaml_iter_next(&peer_array))
+                                                break;
+                                            ogs_yaml_iter_recurse(&peer_array,
+                                                    &peer_iter);
+                                        } else if (ogs_yaml_iter_type(
+                                                    &peer_array) ==
+                                                YAML_SCALAR_NODE) {
+                                            break;
+                                        } else
+                                            ogs_assert_if_reached();
+
+                                        while (ogs_yaml_iter_next(&peer_iter)) {
+                                            const char *key =
+                                                    ogs_yaml_iter_key(&peer_iter);
+                                            ogs_assert(key);
+                                            if (!strcmp(key, "family")) {
+                                                const char *v =
+                                                    ogs_yaml_iter_value(&peer_iter);
+                                                if (v) family = atoi(v);
+                                                if (family != AF_INET &&
+                                                    family != AF_INET6 &&
+                                                    family != AF_UNSPEC) {
+                                                    ogs_warn("Invalid S10 family %d", family);
+                                                    family = AF_UNSPEC;
+                                                }
+                                            } else if (!strcmp(key, "address")) {
+                                                ogs_yaml_iter_t host_iter;
+                                                ogs_yaml_iter_recurse(&peer_iter,
+                                                        &host_iter);
+                                                ogs_assert(ogs_yaml_iter_type(
+                                                    &host_iter) != YAML_MAPPING_NODE);
+                                                do {
+                                                    if (ogs_yaml_iter_type(
+                                                                &host_iter) ==
+                                                            YAML_SEQUENCE_NODE) {
+                                                        if (!ogs_yaml_iter_next(
+                                                                    &host_iter))
+                                                            break;
+                                                    }
+                                                    ogs_assert(num <
+                                                            OGS_MAX_NUM_OF_HOSTNAME);
+                                                    hostname[num++] =
+                                                        ogs_yaml_iter_value(&host_iter);
+                                                } while (ogs_yaml_iter_type(
+                                                            &host_iter) ==
+                                                        YAML_SEQUENCE_NODE);
+                                            } else if (!strcmp(key, "port")) {
+                                                const char *v =
+                                                    ogs_yaml_iter_value(&peer_iter);
+                                                if (v) {
+                                                    int parsed = atoi(v);
+                                                    if (parsed <= 0 || parsed > UINT16_MAX) {
+                                                        ogs_error("Invalid S10 peer port [%s]", v);
+                                                        return OGS_ERROR;
+                                                    }
+                                                    port = parsed;
+                                                }
+                                            } else
+                                                ogs_warn("Unknown S10 peer key '%s'", key);
+                                        }
+
+                                        for (i = 0; i < num; i++) {
+                                            rv = ogs_addaddrinfo(&addr, family,
+                                                    hostname[i], port, 0);
+                                            if (rv != OGS_OK)
+                                                return OGS_ERROR;
+                                        }
+                                        ogs_filter_ip_version(&addr,
+                                                ogs_global_conf()->parameter.no_ipv4,
+                                                ogs_global_conf()->parameter.no_ipv6,
+                                                ogs_global_conf()->parameter.prefer_ipv4);
+                                        if (addr) {
+                                            mme_s10_peer_t *peer =
+                                                    mme_s10_peer_add(addr);
+                                            ogs_assert(peer);
+                                        }
+                                    } while (ogs_yaml_iter_type(&peer_array) ==
+                                            YAML_SEQUENCE_NODE);
+
+                                } else if (!strcmp(client_key, "sgwc")) {
                                     ogs_yaml_iter_t sgwc_array, sgwc_iter;
                                     ogs_yaml_iter_recurse(
                                             &client_iter, &sgwc_array);
@@ -2880,6 +2986,44 @@ mme_sgsn_t *mme_sgsn_find_by_default_routing_address(void)
     ogs_list_for_each(&self.sgsn_list, sgsn) {
         if (sgsn->default_route)
             return sgsn;
+    }
+    return NULL;
+}
+
+mme_s10_peer_t *mme_s10_peer_add(ogs_sockaddr_t *addr)
+{
+    mme_s10_peer_t *peer = NULL;
+    ogs_assert(addr);
+
+    ogs_pool_alloc(&mme_s10_peer_pool, &peer);
+    ogs_assert(peer);
+    memset(peer, 0, sizeof(*peer));
+    peer->gnode.sa_list = addr;
+    ogs_list_init(&peer->gnode.local_list);
+    ogs_list_init(&peer->gnode.remote_list);
+    ogs_list_add(&self.s10_peer_list, peer);
+    return peer;
+}
+
+void mme_s10_peer_remove_all(void)
+{
+    mme_s10_peer_t *peer = NULL, *next = NULL;
+    ogs_list_for_each_safe(&self.s10_peer_list, next, peer) {
+        ogs_list_remove(&self.s10_peer_list, peer);
+        ogs_gtp_xact_delete_all(&peer->gnode);
+        ogs_freeaddrinfo(peer->gnode.sa_list);
+        ogs_pool_free(&mme_s10_peer_pool, peer);
+    }
+}
+
+mme_s10_peer_t *mme_s10_peer_find_by_addr(const ogs_sockaddr_t *addr)
+{
+    mme_s10_peer_t *peer = NULL;
+    ogs_assert(addr);
+
+    ogs_list_for_each(&self.s10_peer_list, peer) {
+        if (ogs_sockaddr_is_equal(&peer->gnode.addr, addr))
+            return peer;
     }
     return NULL;
 }

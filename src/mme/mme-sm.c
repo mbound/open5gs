@@ -839,6 +839,24 @@ cleanup:
         ogs_free(s13_message);
         break;
 
+    case MME_EVENT_S10_MESSAGE:
+        /* The S10 transport is isolated from S11 TEID/session lookup.
+         * Mobility transactions, context transfer and error responses
+         * must be installed before any handover can be enabled. */
+        pkbuf = e->pkbuf;
+        ogs_assert(pkbuf);
+        if (pkbuf->len <
+                OGS_GTPV2C_HEADER_LEN - OGS_GTP2_TEID_LEN) {
+            ogs_warn("Truncated S10 GTPv2-C datagram");
+        } else if (ogs_gtp2_parse_msg(&gtp_message, pkbuf) != OGS_OK) {
+            ogs_warn("Cannot decode S10 GTPv2-C datagram");
+        } else {
+            ogs_debug("S10 message type [%d]: procedure not implemented",
+                    gtp_message.h.type);
+        }
+        ogs_pkbuf_free(pkbuf);
+        break;
+
     case MME_EVENT_S11_MESSAGE:
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);

@@ -17,6 +17,9 @@ mme:
     server:
       - address: 127.0.0.2
     client:
+#      mme:  # Optional S10 peer MME list; no handover procedures yet
+#        - address: 127.0.0.12
+#          port: 2123
       sgwc:
         - address: 127.0.0.3
       smf:

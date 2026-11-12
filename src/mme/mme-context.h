@@ -50,6 +50,7 @@ extern int __esm_log_domain;
 
 typedef struct mme_sgsn_s mme_sgsn_t;
 typedef struct mme_sgw_s mme_sgw_t;
+typedef struct mme_s10_peer_s mme_s10_peer_t;
 typedef struct mme_pgw_s mme_pgw_t;
 typedef struct mme_vlr_s mme_vlr_t;
 typedef struct mme_csmap_s mme_csmap_t;
@@ -107,7 +108,8 @@ typedef struct mme_context_s {
     ogs_list_t      sgw_list;       /* SGW GTPv2C Client List */
     mme_sgw_t       *sgw;           /* Iterator for SGW round-robin */
 
-    ogs_list_t      sgsn_list;       /* SGW GTPv1C Client List */
+    ogs_list_t      sgsn_list;       /* SGSN GTPv1C Client List */
+    ogs_list_t      s10_peer_list;   /* Explicitly trusted S10 MME peers */
 
     ogs_list_t      pgw_list;       /* PGW GTPC Client List */
     ogs_sockaddr_t  *pgw_addr;      /* First IPv4 Address Selected */
@@ -218,6 +220,12 @@ typedef struct mme_sgsn_s {
     ogs_list_t      route_list; /* list of mme_sgsn_route_t */
     bool            default_route; /* use this SGSN as default route */
 } mme_sgsn_t;
+
+/* S10 has its own GTP transaction namespace and must not be treated as S11.
+ * Peer selection by target TAI will be added with the handover state machine. */
+typedef struct mme_s10_peer_s {
+    ogs_gtp_node_t gnode;
+} mme_s10_peer_t;
 
 typedef struct mme_sgw_s {
     ogs_gtp_node_t  gnode;
@@ -1217,6 +1225,10 @@ void mme_sgsn_remove_all(void);
 mme_sgsn_t *mme_sgsn_find_by_addr(const ogs_sockaddr_t *addr);
 mme_sgsn_t *mme_sgsn_find_by_routing_address(const ogs_nas_rai_t *rai, uint16_t cell_id);
 mme_sgsn_t *mme_sgsn_find_by_default_routing_address(void);
+
+mme_s10_peer_t *mme_s10_peer_add(ogs_sockaddr_t *addr);
+void mme_s10_peer_remove_all(void);
+mme_s10_peer_t *mme_s10_peer_find_by_addr(const ogs_sockaddr_t *addr);
 
 mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr);
 void mme_sgw_remove(mme_sgw_t *sgw);
