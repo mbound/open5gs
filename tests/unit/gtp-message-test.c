@@ -439,11 +439,169 @@ static void gtp2_mobility_type_test(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc, 140, OGS_GTP2_RELOCATION_CANCEL_RESPONSE_TYPE);
 }
 
+/* TS 29.274 v19.6.0 Section 7.3: exercise GTPv2-C S10 codecs.
+ * These are codec tests, not MME S10 procedure tests. MM Context remains
+ * an opaque IE pending security-context serialization implementation. */
+static void gtp2_s10_codec_test(abts_case *tc, void *data)
+{
+    ogs_gtp2_message_t tx;
+    ogs_gtp2_message_t rx;
+    ogs_gtp2_header_t header;
+    ogs_gtp2_forward_relocation_request_t decoded;
+    ogs_gtp2_context_response_t context;
+    ogs_gtp2_relocation_cancel_response_t cancel;
+    ogs_pkbuf_t *pkbuf;
+    uint8_t imsi[] = { 0x00, 0x01, 0x01, 0x11 };
+    uint8_t mm_context[] = { 0x01, 0x21, 0x45, 0x67 };
+    uint8_t transparent[] = { 0x01, 0x02, 0x03 };
+    uint8_t apn1[] = { 8, 'i', 'n', 't', 'e', 'r', 'n', 'e', 't' };
+    uint8_t apn2[] = { 3, 'i', 'm', 's' };
+    uint8_t cause[] = { OGS_GTP2_CAUSE_REQUEST_ACCEPTED, 0 };
+    int rv;
+    /* Two home PDN connections, with two EPS bearers in the first. */
+    memset(&tx, 0, sizeof(tx));
+    tx.h.type = OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE;
+    tx.forward_relocation_request.imsi.presence = 1;
+    tx.forward_relocation_request.imsi.data = imsi;
+    tx.forward_relocation_request.imsi.len = sizeof(imsi);
+    tx.forward_relocation_request.mme_sgsn_amf_ue_mm_context.presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_mm_context.data = mm_context;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_mm_context.len = sizeof(mm_context);
+    tx.forward_relocation_request.e_utran_transparent_container.presence = 1;
+    tx.forward_relocation_request.e_utran_transparent_container.data = transparent;
+    tx.forward_relocation_request.e_utran_transparent_container.len =
+        sizeof(transparent);
+
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].apn.presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].apn.data = apn1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].apn.len = sizeof(apn1);
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].
+        bearer_contexts[0].presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].
+        bearer_contexts[0].eps_bearer_id.presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].
+        bearer_contexts[0].eps_bearer_id.u8 = 5;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].
+        bearer_contexts[1].presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].
+        bearer_contexts[1].eps_bearer_id.presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[0].
+        bearer_contexts[1].eps_bearer_id.u8 = 6;
+
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[1].presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[1].apn.presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[1].apn.data = apn2;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[1].apn.len = sizeof(apn2);
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[1].
+        bearer_contexts[0].presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[1].
+        bearer_contexts[0].eps_bearer_id.presence = 1;
+    tx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[1].
+        bearer_contexts[0].eps_bearer_id.u8 = 7;
+
+    pkbuf = ogs_gtp2_build_msg(&tx);
+    ABTS_PTR_NOTNULL(tc, pkbuf);
+    if (!pkbuf)
+        return;
+    memset(&decoded, 0, sizeof(decoded));
+    rv = ogs_tlv_parse_msg(&decoded,
+            &ogs_gtp2_tlv_desc_forward_relocation_request,
+            pkbuf, OGS_TLV_MODE_T1_L2_I1);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    if (rv == OGS_OK) {
+        ABTS_INT_EQUAL(tc, 1, decoded.mme_sgsn_amf_ue_mm_context.presence);
+        ABTS_INT_EQUAL(tc, sizeof(mm_context), decoded.mme_sgsn_amf_ue_mm_context.len);
+        ABTS_INT_EQUAL(tc, 0, memcmp(mm_context,
+                decoded.mme_sgsn_amf_ue_mm_context.data, sizeof(mm_context)));
+        ABTS_INT_EQUAL(tc, 1,
+                decoded.mme_sgsn_amf_ue_eps_pdn_connections[1].presence);
+        ABTS_INT_EQUAL(tc, sizeof(apn1), decoded.mme_sgsn_amf_ue_eps_pdn_connections[0].apn.len);
+        ABTS_INT_EQUAL(tc, 5, decoded.mme_sgsn_amf_ue_eps_pdn_connections[0].
+                bearer_contexts[0].eps_bearer_id.u8);
+        ABTS_INT_EQUAL(tc, 6, decoded.mme_sgsn_amf_ue_eps_pdn_connections[0].
+                bearer_contexts[1].eps_bearer_id.u8);
+        ABTS_INT_EQUAL(tc, 7, decoded.mme_sgsn_amf_ue_eps_pdn_connections[1].
+                bearer_contexts[0].eps_bearer_id.u8);
+    }
+    /* Exercise the complete GTPv2-C header + message parse dispatcher,
+     * not just the TLV parser. S10 requests are TEID-less at initiation. */
+    memset(&header, 0, sizeof(header));
+    header.version = 2;
+    header.type = OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE;
+    header.length = htons(pkbuf->len + 4);
+    header.sqn_only = OGS_GTP2_XID_TO_SQN(0x12345);
+    ABTS_PTR_NOTNULL(tc, ogs_pkbuf_push(pkbuf,
+                OGS_GTPV2C_HEADER_LEN - OGS_GTP2_TEID_LEN));
+    memcpy(pkbuf->data, &header,
+            OGS_GTPV2C_HEADER_LEN - OGS_GTP2_TEID_LEN);
+    memset(&rx, 0, sizeof(rx));
+    rv = ogs_gtp2_parse_msg(&rx, pkbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    if (rv == OGS_OK) {
+        ABTS_INT_EQUAL(tc, OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE, rx.h.type);
+        ABTS_INT_EQUAL(tc, 1,
+                rx.forward_relocation_request.mme_sgsn_amf_ue_eps_pdn_connections[1].presence);
+    }
+    ogs_pkbuf_free(pkbuf);
+
+    /* Context Response carries both UE security and PDN connection data. */
+    memset(&tx, 0, sizeof(tx));
+    tx.h.type = OGS_GTP2_CONTEXT_RESPONSE_TYPE;
+    tx.context_response.cause.presence = 1;
+    tx.context_response.cause.data = cause;
+    tx.context_response.cause.len = sizeof(cause);
+    tx.context_response.mme_sgsn_amf_ue_mm_context.presence = 1;
+    tx.context_response.mme_sgsn_amf_ue_mm_context.data = mm_context;
+    tx.context_response.mme_sgsn_amf_ue_mm_context.len = sizeof(mm_context);
+    tx.context_response.mme_sgsn_amf_ue_eps_pdn_connections[0].presence = 1;
+    tx.context_response.mme_sgsn_amf_ue_eps_pdn_connections[0].apn.presence = 1;
+    tx.context_response.mme_sgsn_amf_ue_eps_pdn_connections[0].apn.data = apn1;
+    tx.context_response.mme_sgsn_amf_ue_eps_pdn_connections[0].apn.len = sizeof(apn1);
+    pkbuf = ogs_gtp2_build_msg(&tx);
+    ABTS_PTR_NOTNULL(tc, pkbuf);
+    if (!pkbuf)
+        return;
+    memset(&context, 0, sizeof(context));
+    rv = ogs_tlv_parse_msg(&context, &ogs_gtp2_tlv_desc_context_response,
+            pkbuf, OGS_TLV_MODE_T1_L2_I1);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    if (rv == OGS_OK) {
+        ABTS_INT_EQUAL(tc, 1, context.cause.presence);
+        ABTS_INT_EQUAL(tc, 1, context.mme_sgsn_amf_ue_mm_context.presence);
+        ABTS_INT_EQUAL(tc, 1,
+                context.mme_sgsn_amf_ue_eps_pdn_connections[0].presence);
+    }
+    ogs_pkbuf_free(pkbuf);
+
+    /* A relocation rejection/cancellation cause survives a round trip. */
+    memset(&tx, 0, sizeof(tx));
+    tx.h.type = OGS_GTP2_RELOCATION_CANCEL_RESPONSE_TYPE;
+    tx.relocation_cancel_response.cause.presence = 1;
+    tx.relocation_cancel_response.cause.data = cause;
+    tx.relocation_cancel_response.cause.len = sizeof(cause);
+    pkbuf = ogs_gtp2_build_msg(&tx);
+    ABTS_PTR_NOTNULL(tc, pkbuf);
+    if (!pkbuf)
+        return;
+    memset(&cancel, 0, sizeof(cancel));
+    rv = ogs_tlv_parse_msg(&cancel,
+            &ogs_gtp2_tlv_desc_relocation_cancel_response,
+            pkbuf, OGS_TLV_MODE_T1_L2_I1);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    if (rv == OGS_OK) {
+        ABTS_INT_EQUAL(tc, sizeof(cause), cancel.cause.len);
+        ABTS_INT_EQUAL(tc, 0, memcmp(cause, cancel.cause.data, sizeof(cause)));
+    }
+    ogs_pkbuf_free(pkbuf);
+}
+
 abts_suite *test_gtp_message(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
 
     abts_run_test(suite, gtp2_mobility_type_test, NULL);
+    abts_run_test(suite, gtp2_s10_codec_test, NULL);
     abts_run_test(suite, gtp_message_test1, NULL);
     abts_run_test(suite, gtp1_mm_context_test, NULL);
 

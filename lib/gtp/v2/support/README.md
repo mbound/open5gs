@@ -203,3 +203,33 @@ Build Open5GS.
 ```sh
 ninja -C build
 ```
+
+
+S10/N26 mobility message generation (TS 29.274 V19.6.0)
+========================================================
+
+The existing generator now includes message types 128–140, which were
+previously excluded. The canonical source is
+`r19.6.0/29274-j60.docx`. The corresponding IE tables are indexed:
+
+- Identification Request/Response: 124, 125
+- Context Request/Response/Acknowledge: 115, 116, 122
+- Forward Relocation Request/Response: 103, 111
+- Forward Relocation Complete Notification/Acknowledge: 113, 114
+- Forward Access Context Notification/Acknowledge: 126, 127
+- Relocation Cancel Request/Response: 132, 133
+
+The committed `cache/tlv-msg-{128..140}.py` files and updated
+`cache/tlv-msg-list.py` reproduce the generated `message.h` and
+`message.c`, disregarding the generated timestamp in their banners.
+
+S10 messages require arrays for repeated PDN Connection and Bearer
+Context IEs. The `repeated_s10_ie_count()` generator function emits
+both the corresponding C array bounds and Open5GS TLV repetition
+descriptors; do not change the array size without updating the
+descriptor count and its codec tests.
+
+The generated MM Context is an opaque IE. It does not by itself support
+secure transfer of an MME's KASME, authentication vectors, NAS counters
+or full EPS mobility/session state; those are higher-layer MME tasks.
+Do not interpret a passing codec round trip as an S10 handover pass.

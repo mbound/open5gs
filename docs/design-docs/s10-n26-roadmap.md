@@ -1,6 +1,6 @@
 # EPC S10, EN-DC (NSA Option 3), and N26 implementation plan
 
-Status: implementation plan and protocol scaffolding; **not yet runtime validated**.
+Status: S10 GTPv2-C message codecs implemented and unit-tested; MME peer transport, transactions and handover state machines remain unimplemented.
 Baseline: [upstream integration RC1](https://github.com/mbound/open5gs/tree/integration/upstream-2026-11-05-rc1), commit `b5c8abdd05a9a2f487b8c61e72cbf67425375fd6`.
 Development branch: `feature/s10-gtpv2-control-plane`.
 
@@ -19,6 +19,28 @@ Primary references: 3GPP TS 23.401 (EPS mobility); TS 29.274 (GTPv2-C message ty
 - `src/sgwc`, `src/sgwu`, `src/smf`, `src/upf`: reuse existing S11/S5/S8/PFCP forwarding and bearer setup rather than introducing independent packet-anchor state.
 
 ## Incremental milestones
+
+### Implemented S10 codec checkpoint (12 November 2026)
+
+- TS 29.274 V19.6.0 codec generation now covers GTPv2-C mobility messages
+  128–140: Identification, Context, Forward Relocation, Forward Access
+  Context and Relocation Cancel families.
+- Generated message structures and descriptors support repeated EPS PDN
+  Connections (up to `OGS_MAX_NUM_OF_SESS`) and nested bearer contexts
+  (up to `OGS_BEARER_PER_UE`), including additional repeated bearer lists.
+- The existing GTPv2 message build/parse dispatch is extended, rather than
+  adding a disconnected proprietary S10 parser.
+- Unit tests cover Forward Relocation, two PDN connections, three nested
+  bearers, MM Context as an opaque IE, Context Response, Relocation Cancel
+  Response and full GTPv2 packet-header parsing.
+- Full Meson/Ninja release-mode build and all four unit suites passed on
+  `rdc-worker-02`; generator output was reproduced from the versioned
+  `lib/gtp/v2/support/r19.6.0/29274-j60.docx` source.
+
+**Limitations:** The MM Context IE is currently transported as opaque bytes:
+KASME/NAS security state serialization and validation are not implemented.
+Neither S10 peer connectivity nor UE context migration or RAN handover is
+implemented. Codec round-trips alone do not establish interoperability.
 
 ### M1-A: Codec and transport foundation
 
@@ -65,7 +87,11 @@ Only after local-PLMN S10/N26 success, implement/test remote-PLMN peer discovery
 
 - The canonical `inter-plmn-hr-n2-ho` branch stays untouched until 5GC HR/N14 regressions pass against the upstream-integrated code.
 - Use targeted feature branches and keep 5GC, EPC and mixed-mode regression suites in CI.
-- **Current blocker:** `rdc-worker-02` ceased responding after launching MongoDB-backed 5GC mobility tests. MongoDB 9.0.4 was started, but no subsequent test result could be retrieved. A missing result is neither a pass nor a fail. Do not promote RC1 without verified runtime results.
+- **5GC regression gate:** On 5 November the worker ran the two 5GC
+  mobility tests; both aborted before handover due to unresolved
+  `*.5gc.mnc070.mcc999.3gppnetwork.org` service hostnames, not a proven
+  mobility defect. The repository includes `configs/inter-plmn-hr-n2-hosts.txt`.
+  Fix lab host resolution and rerun before promoting RC1.
 - The spec corpus and expertise/reference materials are in `mbound/3gpp-oran-standards-tools`; use its `3gpp-specs` MCP lookup to check exact IE optionality, message tables and release-specific variants before finalizing codecs.
 
 ## Standards and source links
