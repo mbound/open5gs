@@ -17,9 +17,14 @@ mme:
     server:
       - address: 127.0.0.2
     client:
-#      mme:  # Optional S10 peer MME list; no handover procedures yet
+#      mme:  # Optional S10 peers; mobility procedures not yet enabled
 #        - address: 127.0.0.12
 #          port: 2123
+#          tai:             # Exact target TAI: PLMN ID and LTE TAC
+#            - plmn_id:
+#                mcc: 999
+#                mnc: 70
+#              tac: 2
       sgwc:
         - address: 127.0.0.3
       smf:

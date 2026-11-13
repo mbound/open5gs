@@ -225,6 +225,10 @@ typedef struct mme_sgsn_s {
  * Peer selection by target TAI will be added with the handover state machine. */
 typedef struct mme_s10_peer_s {
     ogs_gtp_node_t gnode;
+    /* Explicit target routing, exact matching of PLMN ID and LTE TAC.
+     * No catch-all: the MME must fail closed if target TAI is unknown. */
+    int num_of_tai;
+    ogs_eps_tai_t tai[OGS_MAX_NUM_OF_TAI];
 } mme_s10_peer_t;
 
 typedef struct mme_sgw_s {
@@ -1229,6 +1233,7 @@ mme_sgsn_t *mme_sgsn_find_by_default_routing_address(void);
 mme_s10_peer_t *mme_s10_peer_add(ogs_sockaddr_t *addr);
 void mme_s10_peer_remove_all(void);
 mme_s10_peer_t *mme_s10_peer_find_by_addr(const ogs_sockaddr_t *addr);
+mme_s10_peer_t *mme_s10_peer_find_by_tai(const ogs_eps_tai_t *tai);
 
 mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr);
 void mme_sgw_remove(mme_sgw_t *sgw);

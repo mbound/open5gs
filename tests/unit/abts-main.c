@@ -54,6 +54,8 @@ abts_suite *test_mme_s13(abts_suite *suite);
 abts_suite *test_mme_apn(abts_suite *suite);
 abts_suite *test_mme_attach(abts_suite *suite);
 abts_suite *test_mme_enb_id(abts_suite *suite);
+abts_suite *test_mme_s10_route(abts_suite *suite);
+abts_suite *test_mme_s10_handler(abts_suite *suite);
 abts_suite *test_amf_eir(abts_suite *suite);
 abts_suite *test_amf_registration(abts_suite *suite);
 abts_suite *test_amf_namf(abts_suite *suite);
@@ -82,6 +84,8 @@ const struct testlist {
     {test_mme_apn},
     {test_mme_attach},
     {test_mme_enb_id},
+    {test_mme_s10_route},
+    {test_mme_s10_handler},
     {test_amf_eir},
     {test_amf_registration},
     {test_amf_namf},

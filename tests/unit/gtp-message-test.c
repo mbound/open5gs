@@ -596,12 +596,162 @@ static void gtp2_s10_codec_test(abts_case *tc, void *data)
     ogs_pkbuf_free(pkbuf);
 }
 
+/* Exercise the production GTPv2 transaction engine using actual S10 type IDs.
+ * No GTP sockets or MongoDB are needed for stage and correlation testing. */
+static void gtp2_s10_transaction_test(abts_case *tc, void *data)
+{
+    const uint8_t initial_types[] = {
+        OGS_GTP2_IDENTIFICATION_REQUEST_TYPE,
+        OGS_GTP2_CONTEXT_REQUEST_TYPE,
+        OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE,
+        OGS_GTP2_FORWARD_RELOCATION_COMPLETE_NOTIFICATION_TYPE,
+        OGS_GTP2_FORWARD_ACCESS_CONTEXT_NOTIFICATION_TYPE,
+        OGS_GTP2_RELOCATION_CANCEL_REQUEST_TYPE
+    };
+    const struct {
+        uint8_t initial, final;
+    } pairs[] = {
+        { OGS_GTP2_IDENTIFICATION_REQUEST_TYPE,
+            OGS_GTP2_IDENTIFICATION_RESPONSE_TYPE },
+        { OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE,
+            OGS_GTP2_FORWARD_RELOCATION_RESPONSE_TYPE },
+        { OGS_GTP2_FORWARD_RELOCATION_COMPLETE_NOTIFICATION_TYPE,
+            OGS_GTP2_FORWARD_RELOCATION_COMPLETE_ACKNOWLEDGE_TYPE },
+        { OGS_GTP2_FORWARD_ACCESS_CONTEXT_NOTIFICATION_TYPE,
+            OGS_GTP2_FORWARD_ACCESS_CONTEXT_ACKNOWLEDGE_TYPE },
+        { OGS_GTP2_RELOCATION_CANCEL_REQUEST_TYPE,
+            OGS_GTP2_RELOCATION_CANCEL_RESPONSE_TYPE }
+    };
+    ogs_gtp_node_t node = { 0 };
+    ogs_gtp2_header_t header;
+    ogs_gtp_xact_t *xact = NULL, *found = NULL;
+    ogs_pkbuf_t *packet = NULL;
+    ogs_timer_mgr_t *saved_timers = ogs_app()->timer_mgr;
+    uint64_t saved_xacts = ogs_app()->pool.xact;
+    ogs_app_local_conf_t saved_conf = *ogs_local_conf();
+    int i, rv;
+    ogs_pool_id_t previous_id;
+
+    ogs_list_init(&node.local_list);
+    ogs_list_init(&node.remote_list);
+    node.addr.sin.sin_family = AF_INET;
+    ogs_app()->pool.xact = 16;
+    ogs_app()->timer_mgr = ogs_timer_mgr_create(80);
+    ogs_local_conf()->time.message.gtp.t3_holding_duration =
+        ogs_time_from_sec(60);
+    ogs_local_conf()->time.message.gtp.t3_response_duration =
+        ogs_time_from_sec(5);
+    ogs_local_conf()->time.message.gtp.n3_holding_rcount = 1;
+    ogs_local_conf()->time.message.gtp.n3_response_rcount = 1;
+    ABTS_PTR_NOTNULL(tc, ogs_app()->timer_mgr);
+    ABTS_INT_EQUAL(tc, OGS_OK, ogs_gtp_xact_init());
+
+    /* Incoming S10 requests create REMOTE-originator transactions. */
+    for (i = 0; i < (int)OGS_ARRAY_SIZE(initial_types); i++) {
+        memset(&header, 0, sizeof(header));
+        header.type = initial_types[i];
+        header.teid_presence = 1;
+        header.sqn = OGS_GTP2_XID_TO_SQN(i + 1);
+        xact = NULL;
+        rv = ogs_gtp_xact_receive(&node, &header, &xact);
+        ABTS_INT_EQUAL(tc, OGS_OK, rv);
+        ABTS_PTR_NOTNULL(tc, xact);
+        if (xact) {
+            ABTS_INT_EQUAL(tc, OGS_GTP_REMOTE_ORIGINATOR, xact->org);
+            ABTS_INT_EQUAL(tc, 1, xact->step);
+            ABTS_INT_EQUAL(tc, initial_types[i], xact->seq[0].type);
+            ogs_gtp_xact_delete_all(&node);
+        }
+    }
+
+    /* Originating MME: corresponding S10 final responses must match a
+     * LOCAL-originator transaction, not allocate a new remote one. */
+    for (i = 0; i < (int)OGS_ARRAY_SIZE(pairs); i++) {
+        memset(&header, 0, sizeof(header));
+        header.type = pairs[i].initial;
+        packet = ogs_pkbuf_alloc(NULL, 96);
+        ABTS_PTR_NOTNULL(tc, packet);
+        if (!packet)
+            continue;
+        ogs_pkbuf_reserve(packet, OGS_GTPV2C_HEADER_LEN);
+        ogs_pkbuf_put_u8(packet, 0);
+        xact = ogs_gtp_xact_local_create(&node, &header,
+                packet, NULL, NULL);
+        ABTS_PTR_NOTNULL(tc, xact);
+        if (!xact)
+            continue;
+        ABTS_INT_EQUAL(tc, 1, xact->step);
+        memset(&header, 0, sizeof(header));
+        header.type = pairs[i].final;
+        header.teid_presence = 1;
+        header.sqn = OGS_GTP2_XID_TO_SQN(xact->xid);
+        found = NULL;
+        rv = ogs_gtp_xact_receive(&node, &header, &found);
+        ABTS_INT_EQUAL(tc, OGS_OK, rv);
+        ABTS_PTR_EQUAL(tc, xact, found);
+        if (rv == OGS_OK) {
+            ABTS_INT_EQUAL(tc, 2, xact->step);
+            ABTS_INT_EQUAL(tc, OGS_OK, ogs_gtp_xact_commit(xact));
+            ABTS_TRUE(tc, ogs_list_empty(&node.local_list));
+        } else {
+            ogs_gtp_xact_delete_all(&node);
+        }
+    }
+
+    /* Context transfer uses a three-stage exchange. The inbound
+     * Context Acknowledge must match the REMOTE-originator transaction. */
+    memset(&header, 0, sizeof(header));
+    header.type = OGS_GTP2_CONTEXT_REQUEST_TYPE;
+    header.teid_presence = 1;
+    header.sqn = OGS_GTP2_XID_TO_SQN(0x567);
+    xact = NULL;
+    rv = ogs_gtp_xact_receive(&node, &header, &xact);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    ABTS_PTR_NOTNULL(tc, xact);
+    if (xact) {
+        previous_id = xact->id;
+        packet = ogs_pkbuf_alloc(NULL, 96);
+        ABTS_PTR_NOTNULL(tc, packet);
+        if (packet) {
+            ogs_pkbuf_reserve(packet, OGS_GTPV2C_HEADER_LEN);
+            ogs_pkbuf_put_u8(packet, 0);
+            memset(&header, 0, sizeof(header));
+            header.type = OGS_GTP2_CONTEXT_RESPONSE_TYPE;
+            ABTS_INT_EQUAL(tc, OGS_OK,
+                    ogs_gtp_xact_update_tx(xact, &header, packet));
+            ABTS_INT_EQUAL(tc, 2, xact->step);
+            memset(&header, 0, sizeof(header));
+            header.type = OGS_GTP2_CONTEXT_ACKNOWLEDGE_TYPE;
+            header.teid_presence = 1;
+            header.sqn = OGS_GTP2_XID_TO_SQN(xact->xid);
+            found = NULL;
+            rv = ogs_gtp_xact_receive(&node, &header, &found);
+            ABTS_INT_EQUAL(tc, OGS_OK, rv);
+            ABTS_PTR_EQUAL(tc, xact, found);
+            if (rv == OGS_OK) {
+                ABTS_INT_EQUAL(tc, 3, xact->step);
+                ABTS_INT_EQUAL(tc, OGS_OK, ogs_gtp_xact_commit(xact));
+                ABTS_PTR_EQUAL(tc, NULL,
+                        ogs_gtp_xact_find_by_id(previous_id));
+            }
+        }
+        ogs_gtp_xact_delete_all(&node);
+    }
+
+    ogs_gtp_xact_final();
+    ogs_timer_mgr_destroy(ogs_app()->timer_mgr);
+    ogs_app()->timer_mgr = saved_timers;
+    ogs_app()->pool.xact = saved_xacts;
+    *ogs_local_conf() = saved_conf;
+}
+
 abts_suite *test_gtp_message(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
 
     abts_run_test(suite, gtp2_mobility_type_test, NULL);
     abts_run_test(suite, gtp2_s10_codec_test, NULL);
+    abts_run_test(suite, gtp2_s10_transaction_test, NULL);
     abts_run_test(suite, gtp_message_test1, NULL);
     abts_run_test(suite, gtp1_mm_context_test, NULL);
 

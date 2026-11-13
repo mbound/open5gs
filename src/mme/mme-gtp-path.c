@@ -279,6 +279,7 @@ int mme_gtp_open(void)
     }
 
     ogs_list_for_each(&mme_self()->s10_peer_list, s10) {
+        mme_s10_peer_t *other = NULL;
         rv = ogs_gtp_connect(
                 ogs_gtp_self()->gtpc_sock, ogs_gtp_self()->gtpc_sock6,
                 &s10->gnode);
@@ -289,6 +290,15 @@ int mme_gtp_open(void)
         if (mme_sgw_find_by_addr(&s10->gnode.addr)) {
             ogs_error("S10 MME conflicts with an S11 SGW endpoint");
             return OGS_ERROR;
+        }
+        /* Two configured S10 identities on the same remote endpoint
+         * would split GTP transactions and retransmit caches. */
+        ogs_list_for_each(&mme_self()->s10_peer_list, other) {
+            if (other != s10 &&
+                    ogs_sockaddr_is_equal(&other->gnode.addr, &s10->gnode.addr)) {
+                ogs_error("Duplicate S10 MME peer IP/port endpoint");
+                return OGS_ERROR;
+            }
         }
         ogs_warn("S10 peer configured: relocation is not yet enabled");
     }

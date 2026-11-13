@@ -393,6 +393,45 @@ static int parse_plmn_id(ogs_yaml_iter_t *parent_iter, ogs_plmn_id_t *plmn_id)
     return OGS_OK;
 }
 
+/* S10 peer routing can cross PLMNs. Do not silently turn malformed
+ * MCC/MNC strings into zero with atoi(), or lose the MNC digit length. */
+static int parse_s10_plmn_id(
+        ogs_yaml_iter_t *parent_iter, ogs_plmn_id_t *plmn_id)
+{
+    const char *mcc = NULL, *mnc = NULL;
+    ogs_yaml_iter_t iter;
+    size_t i;
+
+    ogs_yaml_iter_recurse(parent_iter, &iter);
+    if (ogs_yaml_iter_type(&iter) != YAML_MAPPING_NODE)
+        return OGS_ERROR;
+
+    while (ogs_yaml_iter_next(&iter)) {
+        const char *key = ogs_yaml_iter_key(&iter);
+        if (!key) return OGS_ERROR;
+        if (!strcmp(key, "mcc"))
+            mcc = ogs_yaml_iter_value(&iter);
+        else if (!strcmp(key, "mnc"))
+            mnc = ogs_yaml_iter_value(&iter);
+        else
+            return OGS_ERROR;
+    }
+
+    if (!mcc || !mnc || strlen(mcc) != 3 ||
+            (strlen(mnc) != 2 && strlen(mnc) != 3))
+        return OGS_ERROR;
+
+    for (i = 0; i < strlen(mcc); i++)
+        if (mcc[i] < '0' || mcc[i] > '9')
+            return OGS_ERROR;
+    for (i = 0; i < strlen(mnc); i++)
+        if (mnc[i] < '0' || mnc[i] > '9')
+            return OGS_ERROR;
+
+    ogs_plmn_id_build(plmn_id, atoi(mcc), atoi(mnc), strlen(mnc));
+    return OGS_OK;
+}
+
 static int parse_lai(ogs_yaml_iter_t *parent_iter, ogs_nas_lai_t *lai)
 {
     bool plmn_id_parsed = false;
@@ -799,7 +838,10 @@ int mme_context_parse_config(void)
                                                 OGS_MAX_NUM_OF_HOSTNAME];
                                         uint16_t port =
                                                 ogs_gtp_self()->gtpc_port;
+                                        ogs_eps_tai_t tai[OGS_MAX_NUM_OF_TAI];
+                                        int num_of_tai = 0, j;
 
+                                        memset(tai, 0, sizeof(tai));
                                         if (ogs_yaml_iter_type(&peer_array) ==
                                                 YAML_MAPPING_NODE) {
                                             memcpy(&peer_iter, &peer_array,
@@ -857,12 +899,80 @@ int mme_context_parse_config(void)
                                                 const char *v =
                                                     ogs_yaml_iter_value(&peer_iter);
                                                 if (v) {
-                                                    int parsed = atoi(v);
-                                                    if (parsed <= 0 || parsed > UINT16_MAX) {
+                                                    char *end = NULL;
+                                                    unsigned long parsed;
+                                                    if (!*v) return OGS_ERROR;
+                                                    parsed = strtoul(v, &end, 10);
+                                                    if (*end || parsed == 0 ||
+                                                            parsed > UINT16_MAX) {
                                                         ogs_error("Invalid S10 peer port [%s]", v);
                                                         return OGS_ERROR;
                                                     }
                                                     port = parsed;
+                                                }
+                                            } else if (!strcmp(key, "tai")) {
+                                                ogs_yaml_iter_t tai_array, tai_iter;
+                                                ogs_yaml_iter_recurse(&peer_iter, &tai_array);
+                                                if (ogs_yaml_iter_type(&tai_array) !=
+                                                        YAML_SEQUENCE_NODE) {
+                                                    ogs_error("S10 peer tai must be a list");
+                                                    return OGS_ERROR;
+                                                }
+                                                while (ogs_yaml_iter_next(&tai_array)) {
+                                                    bool plmn = false, tac = false;
+                                                    const char *tk = NULL;
+                                                    if (num_of_tai >= OGS_MAX_NUM_OF_TAI) {
+                                                        ogs_error("Too many S10 peer TAIs");
+                                                        return OGS_ERROR;
+                                                    }
+                                                    memset(&tai[num_of_tai], 0, sizeof(tai[0]));
+                                                    ogs_yaml_iter_recurse(&tai_array, &tai_iter);
+                                                    if (ogs_yaml_iter_type(&tai_iter) !=
+                                                            YAML_MAPPING_NODE) {
+                                                        ogs_error("S10 TAI entries must be mappings");
+                                                        return OGS_ERROR;
+                                                    }
+                                                    while (ogs_yaml_iter_next(&tai_iter)) {
+                                                        tk = ogs_yaml_iter_key(&tai_iter);
+                                                        ogs_assert(tk);
+                                                        if (!strcmp(tk, "plmn_id")) {
+                                                            if (parse_s10_plmn_id(&tai_iter,
+                                                                    &tai[num_of_tai].plmn_id)
+                                                                    != OGS_OK) {
+                                                                ogs_error("Invalid S10 TAI PLMN");
+                                                                return OGS_ERROR;
+                                                            }
+                                                            plmn = true;
+                                                        } else if (!strcmp(tk, "tac")) {
+                                                            char *end = NULL;
+                                                            const char *v =
+                                                                ogs_yaml_iter_value(&tai_iter);
+                                                            unsigned long parsed;
+                                                            if (!v || !*v) return OGS_ERROR;
+                                                            parsed = strtoul(v, &end, 10);
+                                                            if (*end || parsed > UINT16_MAX) {
+                                                                ogs_error("Invalid S10 target TAC [%s]", v);
+                                                                return OGS_ERROR;
+                                                            }
+                                                            tai[num_of_tai].tac = parsed;
+                                                            tac = true;
+                                                        } else {
+                                                            ogs_error("Unknown S10 TAI key [%s]", tk);
+                                                            return OGS_ERROR;
+                                                        }
+                                                    }
+                                                    if (!plmn || !tac) {
+                                                        ogs_error("S10 TAI requires PLMN and TAC");
+                                                        return OGS_ERROR;
+                                                    }
+                                                    for (j = 0; j < num_of_tai; j++) {
+                                                        if (!memcmp(&tai[j], &tai[num_of_tai],
+                                                                sizeof(ogs_eps_tai_t))) {
+                                                            ogs_error("Duplicate S10 target TAI");
+                                                            return OGS_ERROR;
+                                                        }
+                                                    }
+                                                    num_of_tai++;
                                                 }
                                             } else
                                                 ogs_warn("Unknown S10 peer key '%s'", key);
@@ -879,9 +989,18 @@ int mme_context_parse_config(void)
                                                 ogs_global_conf()->parameter.no_ipv6,
                                                 ogs_global_conf()->parameter.prefer_ipv4);
                                         if (addr) {
-                                            mme_s10_peer_t *peer =
-                                                    mme_s10_peer_add(addr);
+                                            mme_s10_peer_t *peer = NULL;
+                                            for (j = 0; j < num_of_tai; j++) {
+                                                if (mme_s10_peer_find_by_tai(&tai[j])) {
+                                                    ogs_error("S10 target TAI configured on multiple peers");
+                                                    ogs_freeaddrinfo(addr);
+                                                    return OGS_ERROR;
+                                                }
+                                            }
+                                            peer = mme_s10_peer_add(addr);
                                             ogs_assert(peer);
+                                            peer->num_of_tai = num_of_tai;
+                                            memcpy(peer->tai, tai, sizeof(tai));
                                         }
                                     } while (ogs_yaml_iter_type(&peer_array) ==
                                             YAML_SEQUENCE_NODE);
@@ -3024,6 +3143,23 @@ mme_s10_peer_t *mme_s10_peer_find_by_addr(const ogs_sockaddr_t *addr)
     ogs_list_for_each(&self.s10_peer_list, peer) {
         if (ogs_sockaddr_is_equal(&peer->gnode.addr, addr))
             return peer;
+    }
+    return NULL;
+}
+
+mme_s10_peer_t *mme_s10_peer_find_by_tai(const ogs_eps_tai_t *tai)
+{
+    mme_s10_peer_t *peer = NULL;
+    int i;
+
+    if (!tai)
+        return NULL;
+
+    ogs_list_for_each(&self.s10_peer_list, peer) {
+        for (i = 0; i < peer->num_of_tai; i++) {
+            if (!memcmp(&peer->tai[i], tai, sizeof(*tai)))
+                return peer;
+        }
     }
     return NULL;
 }

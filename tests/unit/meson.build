@@ -34,6 +34,8 @@ testunit_unit_sources = files('''
     mme-apn-test.c
     mme-attach-test.c
     mme-enb-id-test.c
+    mme-s10-route-test.c
+    mme-s10-handler-test.c
     amf-eir-test.c
     amf-registration-test.c
     amf-namf-test.c

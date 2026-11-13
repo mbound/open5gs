@@ -1,6 +1,6 @@
 # EPC S10, EN-DC (NSA Option 3), and N26 implementation plan
 
-Status: S10 GTPv2-C message codecs implemented and unit-tested; MME peer transport, transactions and handover state machines remain unimplemented.
+Status: S10 message codecs, static MME peer transport, PLMN/TAI route lookup, basic GTPv2-C transaction correlation and negative responses implemented and tested; **UE mobility, session transfer and S1 handover state machines remain unimplemented**.
 Baseline: [upstream integration RC1](https://github.com/mbound/open5gs/tree/integration/upstream-2026-11-05-rc1), commit `b5c8abdd05a9a2f487b8c61e72cbf67425375fd6`.
 Development branch: `feature/s10-gtpv2-control-plane`.
 
@@ -12,7 +12,7 @@ Primary references: 3GPP TS 23.401 (EPS mobility); TS 29.274 (GTPv2-C message ty
 
 ### Existing Open5GS entry points
 
-- `lib/gtp/v2/message.h`: already has GTPv2-C header, IE vocabulary, F-TEID and MM Context foundations; missing S10/N26 mobility message type declarations and complete message codecs.
+- `lib/gtp/v2/message.h`: now includes generated mobility codecs for types 128–140; transfer of the MM Context as structured EPS security state is still missing.
 - `src/mme/s1ap-handler.c`: current S1 handover path resolves a target eNB locally. Extend to select another MME from target TAI and route a Forward Relocation Request over S10.
 - `src/mme/mme-sm.c`, `src/mme/mme-gtp-path.c`: EPC state machine and existing S11/Gn dispatch; introduce a dedicated S10 control-plane path, peer configuration, and transaction correlation.
 - `src/mme/mme-context.h`: persisted NAS, KASME/KeNB and EPS bearer state must be exported/imported with ownership, lifetime and replay-counter semantics.
@@ -51,14 +51,58 @@ implemented. Codec round-trips alone do not establish interoperability.
   explicit S10 peer endpoints from S11 SGW endpoints.
 - Source-address matching limits the S10 receive path to configured
   peers; overlapping S11/S10 peer IP/port addresses are rejected.
-- **Receive-only stub:** S10 messages are parsed and discarded, with
-  diagnostic logging. No S10 transactions, context migration, TEID
-  allocation, forward-relocation responses or live handover are enabled.
+- **Initial receive-only stub (now superseded by the 13 November checkpoint):**
+  S10 messages were decoded and discarded without responses or mobility
+  handling. No per-UE state was allocated.
 - GTP-C receive now rejects datagrams shorter than the basic header.
 
-This is transport/routing groundwork only. The operational S10 peer
-state machine, TAI/PLMN selection, authenticated inter-node transport,
-transactions, and UE/bearer handover remain mandatory work.
+This was peer-transport groundwork. See below for transaction processing
+and target-TAI routing, which are now partially implemented.
+
+### S10 transaction, reject-path and target-TAI checkpoint (13 November 2026)
+
+The S10 codec and peer layers have been connected to the existing
+`lib/gtp/xact.c` GTPv2-C transaction engine, keeping S10 peer
+transactions **isolated from S11 SGW and UE-session state**.
+
+Implemented:
+
+- GTPv2-C transaction stage classification for Identification,
+  Context Request/Response/Acknowledge, Forward Relocation,
+  Forward Relocation Complete, Forward Access Context and
+  Relocation Cancel (message types 128–140). The three-message
+  Context Request → Context Response → Context Acknowledge
+  exchange now correlates the final acknowledgement against the
+  remote-originator transaction rather than a local S11 transaction.
+- Configured S10 peer endpoints respond to GTP Echo Requests.
+  Unsupported mobility requests receive an explicit **Service Not
+  Supported** cause in the corresponding GTPv2 response/acknowledgement
+  message. Responses use the sender F-TEID where available;
+  **the incoming header TEID is never mistaken for the remote TEID**.
+  Unsolicited responses are ignored.
+- Duplicate requests are handled by the transaction engine's
+  cached-response replay and holding timers. Rejected Context
+  Transfers clean up on Context Acknowledge.
+- Static target-TAI selection via `mme.gtpc.client.mme[].tai`, matching
+  exact MCC, **MNC length**, and LTE TAC. Unknown target TAI is not
+  assigned an arbitrary peer. Duplicate target TAIs and overlapping
+  S10/S11 or S10/S10 remote endpoints are rejected.
+- Loopback UDP unit tests verify actual Echo Response, Forward
+  Relocation rejection, sender F-TEID/response TEID, cause,
+  sequence numbers, Context Response replay and Context
+  Acknowledge cleanup. Additional unit tests exercise transaction
+  stages and exact TAI peer lookup. Full Meson/Ninja build and
+  all four unit executables pass on `rdc-worker-02`.
+
+**Still not implemented:** any S10 request that can transfer a UE or
+execute a handover; EPS security context export/import, local S10 TEID
+allocation and lifecycle, remote-MME selection wired into
+S1AP Handover Required, bearer/PDN reconstruction and S-GW switching,
+rollback/cancel handling, and live two-MME/two-eNB validation.
+Static source IP/port allowlisting is **not** cryptographic peer
+authentication. Production or inter-operator S10 requires secure
+inter-node transport (e.g. IPsec according to operator deployment)
+and proper trust boundaries.
 
 ### M1-A: Codec and transport foundation
 

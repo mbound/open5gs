@@ -1044,7 +1044,12 @@ int ogs_gtp_xact_receive(
         list = &gnode->local_list;
         break;
     case GTP_XACT_FINAL_STAGE:
-        if (xid & OGS_GTP_CMD_XACT_ID) {
+        /* The Context Acknowledge is the final packet sent back by the
+         * initiator of a three-step Context exchange. For a receiving MME,
+         * its transaction belongs to the REMOTE-originator list. */
+        if (type == OGS_GTP2_CONTEXT_ACKNOWLEDGE_TYPE) {
+            list = &gnode->remote_list;
+        } else if (xid & OGS_GTP_CMD_XACT_ID) {
             if (type == OGS_GTP2_MODIFY_BEARER_FAILURE_INDICATION_TYPE ||
                 type == OGS_GTP2_DELETE_BEARER_FAILURE_INDICATION_TYPE ||
                 type == OGS_GTP2_BEARER_RESOURCE_FAILURE_INDICATION_TYPE) {
@@ -1169,6 +1174,15 @@ static ogs_gtp_xact_stage_t ogs_gtp2_xact_get_stage(uint8_t type, uint32_t xid)
 
     switch (type) {
     case OGS_GTP2_ECHO_REQUEST_TYPE:
+    /* TS 29.274 §7.3: S10 mobility and S3/S16/N26 context requests.
+     * These are separate from S11 transactions even though the GTP
+     * transaction engine and message type space are shared. */
+    case OGS_GTP2_IDENTIFICATION_REQUEST_TYPE:
+    case OGS_GTP2_CONTEXT_REQUEST_TYPE:
+    case OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE:
+    case OGS_GTP2_FORWARD_RELOCATION_COMPLETE_NOTIFICATION_TYPE:
+    case OGS_GTP2_FORWARD_ACCESS_CONTEXT_NOTIFICATION_TYPE:
+    case OGS_GTP2_RELOCATION_CANCEL_REQUEST_TYPE:
     case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
     case OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE:
     case OGS_GTP2_DELETE_SESSION_REQUEST_TYPE:
@@ -1194,6 +1208,11 @@ static ogs_gtp_xact_stage_t ogs_gtp2_xact_get_stage(uint8_t type, uint32_t xid)
     case OGS_GTP2_MODIFY_ACCESS_BEARERS_REQUEST_TYPE:
         stage = GTP_XACT_INITIAL_STAGE;
         break;
+    /* Context Response is the middle step of a three-message exchange:
+     * Context Request -> Context Response -> Context Acknowledge. */
+    case OGS_GTP2_CONTEXT_RESPONSE_TYPE:
+        stage = GTP_XACT_INTERMEDIATE_STAGE;
+        break;
     case OGS_GTP2_CREATE_BEARER_REQUEST_TYPE:
     case OGS_GTP2_UPDATE_BEARER_REQUEST_TYPE:
     case OGS_GTP2_DELETE_BEARER_REQUEST_TYPE:
@@ -1203,6 +1222,12 @@ static ogs_gtp_xact_stage_t ogs_gtp2_xact_get_stage(uint8_t type, uint32_t xid)
             stage = GTP_XACT_INITIAL_STAGE;
         break;
     case OGS_GTP2_ECHO_RESPONSE_TYPE:
+    case OGS_GTP2_IDENTIFICATION_RESPONSE_TYPE:
+    case OGS_GTP2_CONTEXT_ACKNOWLEDGE_TYPE:
+    case OGS_GTP2_FORWARD_RELOCATION_RESPONSE_TYPE:
+    case OGS_GTP2_FORWARD_RELOCATION_COMPLETE_ACKNOWLEDGE_TYPE:
+    case OGS_GTP2_FORWARD_ACCESS_CONTEXT_ACKNOWLEDGE_TYPE:
+    case OGS_GTP2_RELOCATION_CANCEL_RESPONSE_TYPE:
     case OGS_GTP2_VERSION_NOT_SUPPORTED_INDICATION_TYPE:
     case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
     case OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE:

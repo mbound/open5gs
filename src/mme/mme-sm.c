@@ -31,6 +31,7 @@
 #include "mme-gn-handler.h"
 #include "mme-gtp-path.h"
 #include "mme-s11-handler.h"
+#include "mme-s10-handler.h"
 #include "mme-fd-path.h"
 #include "mme-s6a-handler.h"
 #include "mme-s13-handler.h"
@@ -851,8 +852,9 @@ cleanup:
         } else if (ogs_gtp2_parse_msg(&gtp_message, pkbuf) != OGS_OK) {
             ogs_warn("Cannot decode S10 GTPv2-C datagram");
         } else {
-            ogs_debug("S10 message type [%d]: procedure not implemented",
-                    gtp_message.h.type);
+            gnode = e->gnode;
+            ogs_assert(gnode);
+            mme_s10_handle_message(gnode, &gtp_message);
         }
         ogs_pkbuf_free(pkbuf);
         break;
