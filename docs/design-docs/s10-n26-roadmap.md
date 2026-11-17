@@ -113,16 +113,146 @@ and proper trust boundaries.
 
 **Gate:** transport + codec tests pass; no UE state/production S1 behavior changed beyond dispatch and configuration.
 
-### M1-B: Inter-MME S1 handover in a single PLMN
+### M1-B: LTE inter-MME S1 handover MVP, including inter-PLMN
 
-1. Source MME receives S1AP Handover Required for a target eNB served by a different MME; resolves target TAI/peer and serializes UE EPS security, session and bearer context.
-2. Source sends S10 Forward Relocation Request; target MME allocates UE context, prepares target bearer forwarding and issues S1AP Handover Request.
-3. Target returns S10 Forward Relocation Response; source issues Handover Command, maintains source state until completion/cancel.
-4. Target receives Handover Notify, sends Forward Relocation Complete Notification, coordinates S11 Modify Bearer with the appropriate S-GW and completes cleanup/acknowledgement.
-5. Support direct and indirect data forwarding, unchanged S-GW and S-GW relocation cases in separate iterations; preserve the UE's PDN connection and IP where procedure permits.
-6. Implement pre-handover cancellation, timeout and transaction replay safety, including resource reclamation on source and target.
+**Priority P0 — this is the current implementation target.** Inter-PLMN
+operation and session continuity are not a later optional milestone.
+The normative procedure is 3GPP TS 23.401 §5.5.1.2.2, with S10
+GTPv2-C IEs defined in TS 29.274 §§7.3.1–7.3.4, EPC security in
+TS 33.401, and S1AP procedures in TS 36.413.
 
-**Gate:** two-MMEs + two-eNB lab test: same PDN IP and user plane before/after HO, no duplicate/default bearer, context release, cancel, reverse HO, SGW relocation, retransmits and End Marker.
+#### MVP deployment and acceptance scope
+
+The first end-to-end environment comprises two MMEs and two eNBs in
+**different PLMNs**, distinct S-GWs (SGW relocation mandatory in this
+initial profile), and a **common home P-GW** reachable by both S-GWs via
+the appropriate S5/S8 arrangements. Start with a UE that is allowed to
+roam, one IPv4 PDN connection, one active default EPS bearer, and a
+conventional S1-based handover. Do not accept an apparent 'handover
+success' that actually re-establishes the PDN connection and reallocates
+the IP. This is a scoped initial profile, not an assertion that all
+inter-PLMN configurations share the same HPLMN.
+
+**Acceptance condition**: a continuous bidirectional IP flow survives
+PLMN-A/eNB-A/MME-A/SGW-A → PLMN-B/eNB-B/MME-B/SGW-B, preserving the
+same P-GW anchor, UE PAA/IP address and PDN session, then survives
+handover in the reverse direction. Packet loss during the interruption
+must be measured; the required result is *session continuity*, not a
+claim of strictly zero lost packets.
+
+#### Mandatory source-MME procedure
+
+1. In `src/mme/s1ap-handler.c`, parse the target eNB Global ID and
+   selected target TAI from the **S1AP Handover Required** message.
+   Retain the existing local-eNB/intra-MME path unchanged when
+   appropriate. For remote TAI, select `mme_s10_peer_find_by_tai()`,
+   enforce inter-PLMN roaming authorization, and reject unknown or
+   ambiguous targets. Do not assume target eNB belongs to the source
+   MME's locally attached eNB list.
+2. Create a **per-UE S10 source relocation object** with an immutable
+   source UE reference, target TAI/PLMN/eNB ID, S10 peer, transaction ID,
+   source/target S10 control TEIDs, target SGW identity, bearer
+   admission, and a rollback/cleanup timer. Its lifecycle must not
+   depend on a dangling raw pointer after UE removal.
+3. Serialize a proper **MM Context (EPS Security Context)** from the
+   live security state (KASME/eKSI, NAS UL/DL COUNT, capabilities,
+   selected algorithms, NH and NCC as specified), following TS 29.274
+   §8.38 / TS 33.401. Do not memcpy a C struct into a vendor-defined
+   opaque MM Context IE, and do not use `mme_ue_memento_t` as the
+   on-wire format: that memento explicitly does not preserve NCC.
+   Protect keys as sensitive data and never log them.
+4. Serialize the linked **PDN Connection** including APN, PDN Type/PAA,
+   P-GW S5/S8-C F-TEID and address, EBI and bearer QoS, S-GW bearer
+   parameters, AMBR and the remaining mandatory/conditional IEs per
+   TS 29.274. The initially supported profile is one IPv4 PDN and one
+   default EBI; reject additional unsupported sessions/bearers
+   explicitly rather than silently dropping them.
+5. Build and send **Forward Relocation Request** (133) with sender S10
+   control-plane F-TEID, subscriber/session context, selected PLMN,
+   target ID, Source-to-Target RAN transparent container and cause.
+   Start GTPv2-C transaction/timer handling using the existing shared
+   engine. Do not issue a source S1AP Handover Command until a
+   successful, admitted target response has been received.
+6. Consume **Forward Relocation Response** (134), checking the cause,
+   matching source transaction and TEIDs, admitted EBI(s), target
+   transparent container and forwarding information. On rejection or
+   timeout, send S1AP Handover Preparation Failure and keep the
+   source S1-U/PDN session intact.
+7. On a successful target response, issue **S1AP Handover Command** to
+   the source eNB. Coordinate forwarding/status transfer; retain
+   source-side context until the matching Forward Relocation Complete
+   exchange and cleanup conditions have been satisfied.
+8. Support source S1AP Handover Cancel with S10 Relocation Cancel,
+   including idempotent rollback; delayed/duplicate S10 responses
+   must not resurrect a canceled UE context.
+
+#### Mandatory target-MME procedure
+
+1. Authorize the source peer and verify the target PLMN/TAI before
+   accepting Forward Relocation Request; parse and validate the complete
+   MM Context and PDN Connection. Reject malformed or unsupported
+   security/session state and release all provisional allocations.
+2. Allocate a target **MME UE context** with its own MME S11/S10 TEIDs,
+   its own eNB UE and SGW UE references, and correctly imported NAS/EPS
+   security state. Ensure transfer of NH/NCC and NAS counters, and
+   security key lifetime handling, before issuing radio procedures.
+3. Select a target S-GW in the visited PLMN and prepare S11/S5/S8
+   bearer transfer while **retaining the home P-GW address/TEID and
+   original PAA**. An ordinary new-session Create Session flow that
+   chooses a new P-GW or assigns a new UE IP is not acceptable.
+   Verify how `src/sgwc`, `src/smf`, and PGW/UPF handling perform
+   inter-SGW relocation and S8 path changes; add missing support there
+   rather than hiding it in the MME.
+4. Send **S1AP Handover Request** to the target eNB. Import admitted
+   E-RAB forwarding endpoints from Handover Request Acknowledge;
+   send S10 Forward Relocation Response with admitted EBI(s), target
+   transparent container, target S10 F-TEID and outcome/cause.
+5. Only on **S1AP Handover Notify** perform the required S11 Modify
+   Bearer/path switch with the target S-GW; only then complete S10
+   Forward Relocation Complete Notification/Acknowledge and release
+   source control/user-plane resources in the correct order.
+6. On target eNB rejection, SGW/PGW failure, cancellation, duplicate
+   transaction or timer expiry, unwind the provisional target context
+   without disrupting the source session. Ensure repeated notification
+   does not trigger a second SGW relocation or duplicate EBI.
+
+#### Concrete implementation touchpoints
+
+| Module | Required change | Status |
+| --- | --- | --- |
+| `src/mme/mme-s10-handler.[ch]` | Replace rejection-only flow with source/target Forward Relocation, Complete and Cancel handlers | Not implemented |
+| `src/mme/mme-s10-build.[ch]` | Encode real MM Context, PDN Connection and transaction-specific IEs | Not created |
+| `src/mme/mme-context.[ch]` | Add bounded per-UE S10 relocation context and TEID ownership/lookup | Not implemented |
+| `src/mme/s1ap-handler.c` | Dispatch remote target TAI to S10; handle source/target S1AP outcomes | Not implemented |
+| `src/mme/s1ap-build.c` | Adapt Handover Request/Command builders for a target MME UE context and imported eNB information | Not implemented |
+| `src/mme/mme-s11-[build,handler].c` | Use transferred S-GW/P-GW/EBI context for target-path activation | Not implemented |
+| `src/sgwc`, `src/smf`, `src/sgwu`, `src/upf` | Support required inter-SGW relocation and home-routed P-GW continuity | Not validated / likely code work |
+| `tests/handover` and `tests/transfer` | Two-MME/eNB integration tests with two PLMNs and a home P-GW | Not created |
+
+The previously implemented S10 codec, configured peer routing, Echo,
+negative response and basic transaction matching remain the *foundation*,
+not evidence that Forward Relocation succeeds.
+
+#### Tests required before MVP is declared finished
+
+- Positive: A→B handover, B→A reverse handover, same PAA/IP and P-GW
+  anchor, same EBI, completed user-plane path switch and cleanup.
+- Validation: transferred MM Context matches TS 29.274, security/NAS
+  counters and NH/NCC are preserved, replay protection works.
+- Negative: unauthorized source/target PLMN, wrong target TAI/eNB,
+  malformed MM Context, missing PDN/bearer context, unknown S10 TEID,
+  unsupported APN/PDN type, duplicate or out-of-order relocation
+  messages, source cancel, target eNB reject, target S-GW failure,
+  response timeout, source MME disconnect, late target Handover Notify.
+- Regression: original intra-MME S1 and X2 handover, EPC attach,
+  5G SA inter-AMF/N2 home-routed handover, and all existing GTPv2 tests.
+- Measurements: ping/TCP continuity, interruption time and packet
+  loss, retained PAA, PGW and per-bearer TEID traces; source/target
+  MME/SGW context counts must return to baseline after cleanup.
+
+**Exit gate:** all positive and mandatory negative cases run against
+two real Open5GS MMEs and user-plane components. A successful
+compile or GTP codec test is insufficient.
 
 ### M2: NSA Option 3/EN-DC interoperability
 
@@ -141,9 +271,19 @@ and proper trust boundaries.
 
 **Gate:** end-to-end EPS→5GS→EPS UE session preservation, correct NAS re-keying and counters, supported QoS mapping, cancellation/rollback, and no leaks.
 
-### M4: Inter-PLMN scenarios
+### M4: Inter-PLMN N26 and advanced roaming extensions
 
-Only after local-PLMN S10/N26 success, implement/test remote-PLMN peer discovery, security/trust domains, inter-PLMN bearer anchor/roaming constraints and handover restrictions. Do not conflate EPC home-routed roaming with the already validated 5GC V-SMF/H-SMF architecture.
+**Inter-PLMN LTE/S10 handover is part of M1-B, not deferred here.** M4 covers additional N26-specific inter-PLMN interworking, advanced EPC roaming cases (multiple PDNs/dedicated bearers, local breakout, alternative P-GW anchors), dynamic peer discovery and broader operator interoperability. Do not conflate EPC home-routed roaming with the existing 5GC V-SMF/H-SMF architecture.
+
+## Execution blocker — 17 November 2026
+
+`rdc-worker-02`, the designated Open5GS implementation/test worker, was
+offline when M1-B execution was resumed (last seen ~49 hours earlier).
+Accordingly no new M1-B C implementation, compilation, lab test or MVP
+completion is asserted in this checkpoint. The GitHub branch remains at
+`b167847ee0acb1236ecd7cda14a06b6845303f40` until build-validated
+changes can be produced. Do not treat planning/architecture review as an
+implemented handover.
 
 ## Compatibility and promotion
 
